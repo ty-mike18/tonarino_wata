@@ -1,0 +1,17 @@
+{
+  "name": "となりの栄養士",
+  "short_name": "となりの栄養士",
+  "description": "健康な成人向けの食生活・睡眠記録と振り返り支援ツール",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F3F7F4",
+  "theme_color": "#1C4A3B",
+  "lang": "ja",
+  "categories": ["health", "lifestyle"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
