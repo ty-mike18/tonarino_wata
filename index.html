@@ -10,6 +10,7 @@
 <title>となりの栄養士</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <style>
 /* 外部フォント(CDN)は使わず、端末内のシステムフォントのみで動作（外部通信を発生させない） */
 :root{
@@ -163,8 +164,10 @@ const TODAY = dateKey(now);
 const WD = ["日","月","火","水","木","金","土"];
 document.getElementById("todayDate").textContent =
   now.getFullYear() + "年" + (now.getMonth()+1) + "月" + now.getDate() + "日（" + WD[now.getDay()] + "）";
-// 日替わりでコメントの言い回しを変えるための種
-const daySeed = Math.floor(now.getTime() / 86400000);
+// 日替わりでコメントの言い回しを変えるための種。
+// UTCではなくローカル(端末)の日付で切り替わるようにオフセットを補正する。
+// 記録キー(dateKey)由来の日番号と一致するため、週番号(WEEK_IDX)ともズレない。
+const daySeed = Math.floor((now.getTime() - now.getTimezoneOffset()*60000) / 86400000);
 const pick = (arr, salt) => arr[(daySeed + salt) % arr.length];
 function stableHash(text){
   let h = 2166136261;
@@ -190,8 +193,9 @@ function clockLabel(v, opt){
   if(m>=60){ h+=1; m=0; }
   const next=h>=24;
   const shown=next ? h-24 : h;
-  const suffix=next ? ((opt&&opt.csv) ? "(翌)" : " 翌") : "";
-  return shown + ":" + String(m).padStart(2,"0") + suffix;
+  const mm=String(m).padStart(2,"0");
+  if(!next) return shown + ":" + mm;
+  return (opt&&opt.csv) ? shown + ":" + mm + "(翌)" : "翌" + shown + ":" + mm;
 }
 function timeMinutes(v, fallbackHour){
   const n=roundTime5(v);
@@ -377,12 +381,32 @@ function normalizeState(raw){
   if(!Array.isArray(s.checkupLog)) s.checkupLog = [];
   if(!Array.isArray(s.levelLog)) s.levelLog = [];
   if(!Array.isArray(s.adviceHistory)) s.adviceHistory = [];
+  if(!Array.isArray(s.praiseHistory)) s.praiseHistory = [];
   if(s.promise===undefined) s.promise = null;
   if(s.profile===undefined) s.profile = null;
+  if(!s.reminder || typeof s.reminder!=="object" || !/^\d{1,2}:\d{2}$/.test(String(s.reminder.time||""))){
+    s.reminder = { on: !!(s.reminder && s.reminder.on), time:"21:00" };
+  }
   return s;
 }
 /* 過去7日間(今日を含む)の頻度からDVSを算出
    返り値: {score:0-10, days:記録日数, freq:{群id:日数}, missing:[ほぼ食べていない群]} */
+function firstRecordDayIndex(){
+  let first=null;
+  Object.keys(S.days).forEach(function(k){
+    if(anyRecord(S.days[k])){
+      const di=dayIndexFromKey(k);
+      if(di!=null && (first==null || di<first)) first=di;
+    }
+  });
+  return first;
+}
+/* 過去7日間(今日を含む)の頻度からDVSを算出する。
+   ・利用開始(初回記録日)を1日目として、7日目以降に算出する(ready)
+   ・窓内の食事記録が7日そろえば「6日以上」を頻出とみなす。
+     1日だけ欠損した週(記録6日)は、6日分のデータから「5日以上」で算出する
+   ・欠損が2日以上(記録5日以下)の週は得点を算出しない(computable=false)
+   返り値: {score, days, freq, missing, ready, computable, need, startDays} */
 function dvsWeekly(){
   const freq={}; let days=0;
   DVS_GROUPS.forEach(function(g){freq[g.id]=0;});
@@ -394,13 +418,19 @@ function dvsWeekly(){
       DVS_GROUPS.forEach(function(g){ if(d.dvs && d.dvs[g.id]) freq[g.id]++; });
     }
   }
-  const score = DVS_GROUPS.filter(function(g){return freq[g.id]>=6;}).length;
+  const first = firstRecordDayIndex();
+  const todayIdx = dayIndexFromKey(TODAY);
+  const startDays = (first==null || todayIdx==null) ? 0 : (todayIdx - first + 1); // 利用日数(初回記録日=1日目)
+  const ready = startDays >= 7;
+  const need = days >= 7 ? 6 : 5;   // 1日欠損の週は6日分から「5日以上」で判定
+  const computable = ready && days >= 6;
+  const score = DVS_GROUPS.filter(function(g){return freq[g.id]>=need;}).length;
   const missing = DVS_GROUPS.filter(function(g){return freq[g.id]<=1;});
-  return { score:score, days:days, freq:freq, missing:missing };
+  return { score:score, days:days, freq:freq, missing:missing,
+           ready:ready, computable:computable, need:need, startDays:startDays };
 }
 /* ---------- 利用同意・監修表記 ---------- */
-const CONSENT_VERSION = "1.0";   // 同意文を改訂したら必ず数字を上げる(再同意が求められる)
-const SUPERVISOR = "";           // 例: "山田太郎（管理栄養士）" ← 監修者の実名・資格を必ず記入して公開すること
+const CONSENT_VERSION = "1.1";   // 同意文を改訂したら必ず数字を上げる(再同意が求められる)
 const CONSENT_TEXT =
   "本アプリは、健康な成人を対象とした食生活の記録・振り返り支援ツールです。" +
   "疾病の診断、治療、予防、医療上の判断、専門職による個別栄養指導の代替を目的とするものではありません。" +
@@ -410,7 +440,8 @@ const PRIVACY_TEXT =
   "すべての記録はお使いの端末の中（ブラウザの保存領域）だけに保存されます。" +
   "ただし、利用者自身がCSVファイルを書き出して共有した場合は、その共有先で情報が管理されます。" +
   "また、端末を家族などと共有している場合、同じ端末からこのアプリを開いた人に記録を見られる可能性があります。" +
-  "ブラウザのデータ削除、端末の変更、アプリのURL変更により記録が失われることがあるため、「経過」タブからのCSVバックアップを定期的におすすめします。";
+  "ブラウザのデータ削除、端末の変更、アプリのURL変更により記録が失われることがあるため、「経過」タブからのCSVバックアップを定期的におすすめします。" +
+  "書き出したCSVは、「経過」タブの「CSVから復元する」から読み込むと、記録(食事・睡眠・体重など)を復元できます。";
 
 let S = normalizeState(load());
 // 週番号の定義変更(月曜開始)への移行: 既存の約束は今週分として扱う
@@ -424,6 +455,7 @@ let ckForm = null;         // 定期アセスメントの入力中データ
 let aboutMode = false;     // 利用上のご案内画面の表示フラグ
 let consentChecked = false; // 同意チェックボックスの状態(画面表示中のみ)
 let pendingPromiseChoice = null; // 今週の約束を確定する前の確認用
+let importResult = null;   // CSV復元の直近の結果(画面表示用)
 
 /* ---------- アセスメント計算 ----------
    基礎代謝量: 国立健康・栄養研究所の式（Ganpule et al., 2007）
@@ -433,6 +465,21 @@ let pendingPromiseChoice = null; // 今週の約束を確定する前の確認�
    Eur J Clin Nutr 61(11):1256-1261, 2007. */
 function bmr(w,h,age,sexF){
   return ((0.1238 + 0.0481*w + 0.0234*h - 0.0138*age - 0.5473*(sexF?2:1))*1000)/4.186;
+}
+/* 入力値の妥当性チェック。健康な成人向けアプリとして安全な範囲に限定する */
+function profileInputError(age, height, weight, goal){
+  if(!(age>=18 && age<=100)) return "年齢は18〜100歳の範囲で入力してください（本アプリは健康な成人向けのツールです）。";
+  if(!(height>=120 && height<=220)) return "身長は120〜220cmの範囲で入力してください。入力値をご確認ください。";
+  if(!(weight>=30 && weight<=200)) return "体重は30〜200kgの範囲で入力してください。入力値をご確認ください。";
+  if(goal==="loss" && weight/Math.pow(height/100,2) < 18.5)
+    return "現在のBMIが18.5未満（低体重）のため、「減量したい」は選べません。維持または増量を目標にするか、医師・管理栄養士にご相談ください。";
+  return null;
+}
+/* 目標エネルギー。減量でも基礎代謝と1200kcalを下回らないようにする */
+function targetEnergy(e0, goal, bmrVal){
+  const e = goal==="loss" ? e0-300 : goal==="gain" ? e0+300 : e0;
+  const floor = Math.max(1200, Math.round(bmrVal/10)*10);
+  return Math.max(e, floor);
 }
 const PAL = { low:1.5, mid:1.75, high:2.0 };
 const PAL_LABEL = { low:"低い（座位中心）", mid:"ふつう（通勤・家事あり）", high:"高い（立ち仕事・運動習慣）" };
@@ -556,7 +603,7 @@ const FACTS = [
     fact:"今日は朝食をとれています。",
     benefits:{
       loss:"朝に食べる習慣が定着すると、夜の食欲の暴走が静まり、半年後には「我慢しない減量」が現実になります。",
-      bp:"朝食をとる習慣は体内時計を整え、朝食を抜く習慣がある人ほど肥満になりやすいことが複数の研究で報告されています。続けるほど、1日の代謝リズムが安定していきます。",
+      bp:"朝食をとる習慣は体内時計を整え、肥満やメタボリックシンドロームのリスクを下げる方向に働くことが複数の研究で報告されています。続けるほど、1日の代謝リズムが安定していきます。",
       gain:"朝のエネルギー補給は筋肉の分解を防ぎます。この積み重ねが、体重を「増やせる体」をつくります。",
       "default":"朝食は体内時計を整えるスイッチです。続けるほど睡眠と日中の集中力が底上げされていきます。"
     }},
@@ -613,7 +660,7 @@ const FACTS = [
     fact:"1日の食事が12時間以内におさまっています。",
     benefits:{
       loss:"食べる時間帯を区切ると、夜間の脂肪燃焼の時間がしっかり確保できます。量を変えずに「いつ食べるか」で差をつける、賢い食べ方です。",
-      bp:"夜間の絶食時間を長くとる食べ方は、食後の血糖が下がる時間を確保でき、代謝の管理に役立つことが報告されています。",
+      bp:"食べる時間帯にメリハリがあると、消化器を休ませる時間が生まれ、代謝のリズムを支えることが報告されています。",
       "default":"夜の間に消化器を休ませる食べ方です。続けると睡眠の深さと朝の目覚めが変わった、という声が多い習慣です。"
     }},
   { when:(p,d)=> sleepRecorded(d) && sleepDur(d.sleep)>=6 && sleepDur(d.sleep)<=9 && !d.meals.breakfast.skipped && mealRecorded(d),
@@ -664,7 +711,7 @@ const FACTS = [
     benefits:{
       "default":"「さあにぎやかいただく」の合言葉どおりの食卓です。食品の多様性が高い人ほど、筋力や認知機能が保たれやすいことが日本の高齢者研究で示されています。"
     }},
-  { when:(p,d)=> { const v=dvsWeekly(); return v.days>=7 && v.score>=7; },
+  { when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=7; },
     fact:"この1週間、食事の多様性得点が7点以上です。",
     benefits:{
       "default":"10食品群のうち7つ以上を「ほぼ毎日」食べられています。これは栄養学の調査で「低栄養になりにくい食べ方」とされる水準で、続けるほど将来の体力の貯金になります。"
@@ -844,7 +891,7 @@ const DAIRY_IDEAS = [
   "パンにチーズをのせて焼き、主食と乳製品を同時に満たす",
   "外食のセットドリンクをカフェラテにする",
   "在宅の日は、15時に温かいミルクティーを入れる",
-  "朝食を抜きがちな日は、飲むヨーグルトを玄関近くに置く",
+  "朝が慌ただしい日は、飲むヨーグルトを玄関近くに置く",
   "スーパーでは3連ヨーグルトを1セットだけ買う",
   "夕食が軽い日は、寝る2時間前までにホットミルクを少量",
   "プロテインを使う日でも、カルシウム源として乳製品を別に意識する",
@@ -859,7 +906,7 @@ DAIRY_IDEAS.push(
   "コンビニのサンドイッチに、無糖ヨーグルトかカフェラテを合わせる",
   "朝食がごはんの日は、食後に小さな飲むヨーグルトを1本つける",
   "夕方の補食に、チーズ1個とミニトマトを組み合わせる",
-  "高齢期の食欲が落ちる日は、牛乳入りの茶碗蒸しや卵スープを候補にする",
+  "食欲が落ちる日は、牛乳入りの茶碗蒸しや卵スープを候補にする",
   "冷たい牛乳が苦手なら、電子レンジで温めてシナモンを少し振る",
   "外食のモーニングでは、トーストにチーズ追加かヨーグルト付きセットを選ぶ",
   "和定食の日は、帰宅後の補食でヨーグルトを足して1日の穴を埋める",
@@ -875,7 +922,7 @@ DAIRY_IDEAS.push(
   "買い物メモに、牛乳・ヨーグルト・チーズのどれか1つだけ固定で入れる",
   "冷蔵庫の開けてすぐの段にヨーグルトを置き、存在を見える化する",
   "在宅勤務の日は、午前の休憩にカフェオレを入れる",
-  "朝食を抜きやすい日は、飲むヨーグルトを前日にバッグへ入れておく",
+  "朝の準備に余裕がない日は、飲むヨーグルトを前日にバッグへ入れておく",
   "昼食後の甘い飲み物を、無糖カフェラテに替える日を作る",
   "家族用の牛乳を買うとき、自分用に小さい紙パックも1本足す",
   "デザートを選ぶ日は、アイスよりヨーグルトや牛乳寒天を先に候補にする",
@@ -1093,22 +1140,31 @@ function snackAdvice(p,d){
   if(frequentSweetDrink) variants.push("この1週間は甘い飲み物が続き気味です。毎回ゼロではなく、1回だけ無糖のお茶・炭酸水・水に差し替える作戦が現実的です。");
   if(frequentConfection) variants.push("この1週間は菓子類の日が多めです。袋を開ける前に小皿へ出す、または先に果物・ヨーグルトを食べてから選ぶと、量を責めずに調整できます。");
   if(frequentBoth) variants.push("菓子類と甘い飲み物が同じ日に重なる傾向があります。満足感のわりに糖質が重なりやすいので、まずは飲み物だけ無糖に寄せると負担が小さいです。");
-  variants.push("もし甘い菓子類を間食でとっている場合は、果物・ヨーグルト・チーズのような候補を先に置いておくと、置き換えが起こりやすくなります。");
-  variants.push("甘い飲み物は、飲む量よりも“習慣の位置”が残りやすいところです。いつもの1本を半分サイズにする、または最初の一口だけ水にする、でも十分な一歩です。");
-  variants.push("コンビニなら、菓子棚へ行く前にカットフルーツ、無糖ヨーグルト、ナッツ小袋を先に見る順番にすると、選び方が変わりやすくなります。");
-  variants.push("外食後に甘い飲み物が欲しくなる日は、食後すぐではなく帰宅後に温かいお茶を入れてから選ぶと、勢いだけで足す量を減らしやすくなります。");
-  variants.push("菓子類を選ぶ日でも、袋から直接ではなく皿に出すだけで、食べた量が見えるようになります。見える化は、我慢より続きやすい調整です。");
-  variants.push("甘い飲み物が午後の眠気対策になっているなら、先に水分不足と昼食量を疑ってみましょう。水かお茶を飲んで10分待ってから選ぶと、本当に欲しい量が見えます。");
-  variants.push("菓子類が夕方に集中する日は、昼食の主食か主菜が少なかった可能性があります。翌日は昼におにぎり半分か卵1個を足して、夕方の欲しさが変わるか見てみましょう。");
-  variants.push("甘い飲み物を完全にやめるより、サイズを下げる、氷を多めにする、無糖と交互に飲む、のほうが続きやすい人も多いです。");
-  variants.push("夜に菓子類が出やすい日は、夕食後すぐ歯をみがく・温かいお茶を入れる・台所の照明を落とす、のように終わりの合図を作ると切り替えやすいです。");
+  // 記録された種類に合う文面だけを候補にする（菓子類だけの日に飲み物の話をしない）
+  if(hasSnackKind(d,"confection")){
+    variants.push("もし甘い菓子類を間食でとっている場合は、果物・ヨーグルト・チーズのような候補を先に置いておくと、置き換えが起こりやすくなります。");
+    variants.push("コンビニなら、菓子棚へ行く前にカットフルーツ、無糖ヨーグルト、ナッツ小袋を先に見る順番にすると、選び方が変わりやすくなります。");
+    variants.push("菓子類を選ぶ日でも、袋から直接ではなく皿に出すだけで、食べた量が見えるようになります。見える化は、我慢より続きやすい調整です。");
+    variants.push("菓子類が夕方に集中する日は、昼食の主食か主菜が少なかった可能性があります。翌日は昼におにぎり半分か卵1個を足して、夕方の欲しさが変わるか見てみましょう。");
+    variants.push("夜に菓子類が出やすい日は、夕食後すぐ歯をみがく・温かいお茶を入れる・台所の照明を落とす、のように終わりの合図を作ると切り替えやすいです。");
+    variants.push("菓子類を楽しむ日を残すなら、食後すぐに小皿で食べる形が現実的です。空腹時に単独で食べるより、量が増えにくくなります。");
+  }
+  if(hasSnackKind(d,"sweetDrink")){
+    variants.push("甘い飲み物は、飲む量よりも“習慣の位置”が残りやすいところです。いつもの1本を半分サイズにする、または最初の一口だけ水にする、でも十分な一歩です。");
+    variants.push("外食後に甘い飲み物が欲しくなる日は、食後すぐではなく帰宅後に温かいお茶を入れてから選ぶと、勢いだけで足す量を減らしやすくなります。");
+    variants.push("甘い飲み物が午後の眠気対策になっているなら、先に水分不足と昼食量を疑ってみましょう。水かお茶を飲んで10分待ってから選ぶと、本当に欲しい量が見えます。");
+    variants.push("甘い飲み物を完全にやめるより、サイズを下げる、氷を多めにする、無糖と交互に飲む、のほうが続きやすい人も多いです。");
+    variants.push("甘い飲み物が習慣になっている場合は、まず週に2日だけ“最初の1本を無糖にする日”を作ると、味覚が少しずつ慣れていきます。");
+  }
   variants.push("買い置きがあると手が伸びやすい人は、家ではなく外で1回分だけ買う形にすると、意思の力を使う場面を減らせます。");
-  variants.push("甘い飲み物が習慣になっている場合は、まず週に2日だけ“最初の1本を無糖にする日”を作ると、味覚が少しずつ慣れていきます。");
-  variants.push("菓子類を楽しむ日を残すなら、食後すぐに小皿で食べる形が現実的です。空腹時に単独で食べるより、量が増えにくくなります。");
   return prefix + pick(variants, 31);
 }
 function supplementAdvice(p,d){
-  const variants=[
+  // 目標・年齢に合う文だけを候補に加える
+  const extra=[];
+  if(p.goal==="gain") extra.push("増量や筋力アップが目標なら、補食はかなり大事な味方です。3食を大盛りにするより、運動後や15時に牛乳・ヨーグルト・おにぎり・卵を小さく足すほうが、胃の負担を抑えながら総量を増やせます。");
+  if(p.age>=65) extra.push("高齢期は一度の食事量が減りやすいため、補食でたんぱく質や乳製品を分けて拾う考え方が役立ちます。ヨーグルト、チーズ、ゆで卵が使いやすい候補です。");
+  const variants=extra.concat([
     "補食が3回以上になっています。補食は悪いものではなく、3食だけで足りないエネルギーや栄養を支える役割があります。回数が増える日は、主食・たんぱく質・乳製品・果物のどれを補えているかを見てみましょう。",
     "補食が多い日は、食事と食事の間でエネルギーが切れている可能性があります。おにぎり、ヨーグルト、果物、ゆで卵のように、次の食事まで支えるものを選ぶと整いやすいです。",
     "補食の回数が増えている日は、時間を決めるだけでもリズムが戻ります。午前か午後のどちらか1回を“予定された補食”にすると、3食を補う役割がはっきりします。",
@@ -1116,7 +1172,6 @@ function supplementAdvice(p,d){
     "活動量が多い日や夕食が遅い日は、補食があるほうが体は楽です。バナナ、ヨーグルト、チーズ、おにぎり半分のように、食事の不足を埋める候補に寄せましょう。",
     "補食の中身が主食だけに偏ると、すぐ空腹が戻ることがあります。主食に乳製品や卵を合わせると、次の食事まで持ちやすくなります。",
     "夕方の補食は、帰宅後の食べ過ぎを防ぐ味方にもなります。お菓子で埋めるより、おにぎり・果物・ヨーグルトのように役割が見えるものを選べると理想的です。",
-    "増量や筋力維持が目標なら、補食は大切な作戦です。3食を大盛りにするより、15時や運動後に小さく足すほうが胃の負担を減らせます。",
     "朝食が軽い日は、午前の補食で乳製品や果物を足すと、午前中の集中力が落ちにくくなります。補食を“栄養の追加枠”として使いましょう。",
     "昼食から夕食までが長い日は、補食を予定に入れるほうが自然です。時間を決めて食べる補食は、だらだら食べとは別物です。",
     "補食が増えた日は、前後の食事が少なすぎなかったかを振り返るチャンスです。特に昼の主食・主菜が少ないと、夕方に欲しくなりやすくなります。",
@@ -1125,7 +1180,7 @@ function supplementAdvice(p,d){
     "補食の回数だけでは良し悪しは決まりません。栄養を補えている補食か、口さみしさで続いているものかを分けて見られると、整え方が見えてきます。",
     "補食を前向きに使うなら、買う前に目的を決めるのがコツです。エネルギーならおにぎり、たんぱく質なら卵やヨーグルト、カルシウムならチーズ、という具合です。",
     "夜遅い夕食が避けにくい日は、夕方の補食で主食を少し先取りし、帰宅後は汁物と主菜中心にする分食が使えます。補食はリズムを守るための道具です。"
-  ];
+  ]);
   return pick(variants, 43);
 }
 const PRACTICAL_FOOD_IDEAS = [
@@ -1294,7 +1349,17 @@ PRACTICAL_FOOD_IDEAS.push(
   "同じ食材に飽きる人は、食品群を固定して食材を替えましょう。魚の日はツナ、サバ、鮭を回せます。",
   "予定が読めない日は、冷凍野菜、卵、豆腐、レトルトごはんの4点を家に置くと、帰宅後に一食の形を作れます。"
 );
-function practicalAdvice(){ return pick(PRACTICAL_FOOD_IDEAS, 47); }
+function practicalAdvice(p){
+  // 目標・年齢に合わない案(増量/減量/血圧/高齢期向け)は候補から外す
+  const pool = PRACTICAL_FOOD_IDEAS.filter(function(t){
+    if(/増量/.test(t) && p.goal!=="gain") return false;
+    if(/減量/.test(t) && p.goal!=="loss") return false;
+    if(/血圧/.test(t) && p.goal!=="bp") return false;
+    if(/高齢期/.test(t) && p.age<65) return false;
+    return true;
+  });
+  return pick(pool, 47);
+}
 function dvsWeekTracked(){
   const v=dvsWeekly();
   return v.days>=4 && DVS_GROUPS.some(function(g){return v.freq[g.id]>0;});
@@ -1304,17 +1369,17 @@ function weeklyDvsMiss(id, maxDays){
   return dvsWeekTracked() && v.freq[id]<=maxDays;
 }
 const ADVICE = [
-  { pri:1, title:"朝食について", when:(p,d)=> d.meals.breakfast.skipped,
+  { pri:1, title:"朝食について", composed:true, when:(p,d)=> d.meals.breakfast.skipped,
     body:(p,d)=> breakfastAdvice(p,d)},
-  { pri:1.05, title:"朝食が遅めの日", when:(p,d)=> !d.meals.breakfast.skipped && d.meals.breakfast.time>=10 && mealRecorded(d),
+  { pri:1.05, title:"朝食が遅めの日", composed:true, when:(p,d)=> !d.meals.breakfast.skipped && d.meals.breakfast.time>=10 && mealRecorded(d),
     body:(p,d)=> breakfastAdvice(p,d)},
   { pri:1.08, title:"昼食を抜いた日", when:(p,d)=> d.meals.lunch.skipped && mealRecorded(d),
     body:()=> "昼食を抜いた日は、夕方以降に菓子類や甘い飲み物へ引っ張られやすくなります。しっかり食べられない日でも、おにぎり半分＋ゆで卵、ヨーグルト＋果物のような補食を予定しておくと、夜の反動を抑えやすいです。"},
   { pri:1.1, title:"夕食を抜いた日", when:(p,d)=> d.meals.dinner.skipped && mealRecorded(d),
     body:()=> "夕食を抜いた日は、翌朝の空腹や夜間の目覚めにつながることがあります。遅い時間で重い食事が難しい日は、具だくさん味噌汁、豆腐、卵入り雑炊のように、軽くても主菜が入る形を選ぶと体が落ち着きやすいです。"},
-  { pri:1, title:"夕食がかなり遅い時間です", when:(p,d)=> !d.meals.dinner.skipped && d.meals.dinner.time>=23,
+  { pri:1, title:"夕食がかなり遅い時間です", composed:true, when:(p,d)=> !d.meals.dinner.skipped && d.meals.dinner.time>=23,
     body:(p,d)=> lateDinnerAdvice(p,d)},
-  { pri:2, title:"夕食の時刻", when:(p,d)=> !d.meals.dinner.skipped && d.meals.dinner.time>=21 && d.meals.dinner.time<23,
+  { pri:2, title:"夕食の時刻", composed:true, when:(p,d)=> !d.meals.dinner.skipped && d.meals.dinner.time>=21 && d.meals.dinner.time<23,
     body:(p,d)=> lateDinnerAdvice(p,d)},
   { pri:2.05, title:"夕食前の補食の使い方", when:(p,d)=> !d.meals.dinner.skipped && d.meals.dinner.time>=21 && Number(d.snacks||0)>=1,
     body:()=> "夕食が遅い日に補食を使えているのは、体の空腹を放置しないという意味でよい作戦です。次は中身を、おにぎり半分・ヨーグルト・果物・チーズのような“3食を補うもの”に寄せると、帰宅後の食べ過ぎ予防にもつながります。"},
@@ -1322,12 +1387,12 @@ const ADVICE = [
     body:()=> "最初の食事から最後の食事まで14時間以上あいています。食べる時間帯を12時間以内に収めるだけで、体重や血糖に良い影響が出ることが報告されています。夜を早める方向がおすすめです。"},
   { pri:2.1, title:"食べている時間帯が少し長め", when:(p,d)=> mealRecorded(d) && eatingSpan(d.meals)>=12 && eatingSpan(d.meals)<14,
     body:()=> "食べている時間帯が12時間を少し超えています。大きく変えなくても、夜の最後の一口を15分だけ前へ、または朝食の開始を少しだけ整えるだけで、体内時計はかなり安定しやすくなります。"},
-  { pri:2, title:"野菜料理をもう1皿", when:(p,d)=> mealRecorded(d) && d.sv["副菜"] < p.targets["副菜"]*0.6,
+  { pri:2, title:"野菜料理をもう1皿", composed:true, when:(p,d)=> mealRecorded(d) && d.sv["副菜"] < p.targets["副菜"]*0.6,
     body:(p,d)=> sideDishLowAdvice(p,d)},
-  { pri:2.15, title:"副菜はあと少しです", when:(p,d)=> mealRecorded(d) && d.sv["副菜"] >= p.targets["副菜"]*0.6 && d.sv["副菜"] < p.targets["副菜"],
+  { pri:2.15, title:"副菜はあと少しです", composed:true, when:(p,d)=> mealRecorded(d) && d.sv["副菜"] >= p.targets["副菜"]*0.6 && d.sv["副菜"] < p.targets["副菜"],
     body:(p,d)=> sideDishAlmostAdvice(p,d)},
   { pri:2.2, title:"今日の現実的な一手", when:(p,d)=> mealRecorded(d) && (dayScore(d,p.targets)<70 || Object.values(d.sv).filter(v=>v>0).length<=3),
-    body:()=> practicalAdvice()},
+    body:(p)=> practicalAdvice(p)},
   { pri:1, title:"主食がほとんどとれていません", when:(p,d)=> d.sv["主食"]<=1 && (d.sv["主菜"]>0 || d.sv["副菜"]>0),
     body:(p)=> byGoal(p,{
       loss:"ごはんを極端に減らすと、一時的に体重は落ちても反動の食欲とリバウンドを招きやすくなります。毎食こぶし1つ分の主食は「減量の味方」です。",
@@ -1351,15 +1416,15 @@ const ADVICE = [
     body:()=> "増量や筋力アップを目指す場合、補食はかなり大事な味方です。3食を大盛りにするより、運動後や15時に牛乳・ヨーグルト・おにぎり・卵を小さく足すほうが、胃の負担を抑えながら総量を増やせます。"},
   { pri:2, title:"たんぱく質が不足ぎみ", when:(p,d)=> p.age<65 && d.sv["主菜"]<=1 && d.sv["主食"]>=2,
     body:(p)=> "肉・魚・卵・大豆が少なめです。たんぱく質が足りないと空腹感が強まり、間食が増えやすくなります。"},
-  { pri:2.1, title:"乳製品はあと少し", when:(p,d)=> d.sv["乳製品"]>0 && d.sv["乳製品"]<p.targets["乳製品"] && totalSV(d)>=5,
+  { pri:2.1, title:"乳製品はあと少し", composed:true, when:(p,d)=> d.sv["乳製品"]>0 && d.sv["乳製品"]<p.targets["乳製品"] && totalSV(d)>=5,
     body:(p,d)=> dairyAdvice(p,d)},
-  { pri:2.5, title:"カルシウムを意識したい時期です", when:(p,d)=> p.sexF && p.age>=50 && d.sv["乳製品"]===0 && totalSV(d)>=5,
+  { pri:2.5, title:"カルシウムを意識したい時期です", composed:true, when:(p,d)=> p.sexF && p.age>=50 && d.sv["乳製品"]===0 && totalSV(d)>=5,
     body:(p,d)=> dairyAdvice(p,d)},
-  { pri:4, title:"乳製品がゼロでした", when:(p,d)=> !(p.sexF && p.age>=50) && d.sv["乳製品"]===0 && totalSV(d)>=5,
+  { pri:4, title:"乳製品がゼロでした", composed:true, when:(p,d)=> !(p.sexF && p.age>=50) && d.sv["乳製品"]===0 && totalSV(d)>=5,
     body:(p,d)=> dairyAdvice(p,d)},
-  { pri:4.4, title:"果物はあと少し", when:(p,d)=> d.sv["果物"]>0 && d.sv["果物"]<p.targets["果物"] && totalSV(d)>=5,
+  { pri:4.4, title:"果物はあと少し", composed:true, when:(p,d)=> d.sv["果物"]>0 && d.sv["果物"]<p.targets["果物"] && totalSV(d)>=5,
     body:(p,d)=> fruitAdvice(p,d)},
-  { pri:5, title:"果物がゼロでした", when:(p,d)=> d.sv["果物"]===0 && totalSV(d)>=5,
+  { pri:5, title:"果物がゼロでした", composed:true, when:(p,d)=> d.sv["果物"]===0 && totalSV(d)>=5,
     body:(p,d)=> fruitAdvice(p,d)},
   { pri:1.4, title:"菓子類・嗜好飲料", when:(p,d)=> snackKindRecorded(d),
     body:(p,d)=> snackAdvice(p,d)},
@@ -1399,17 +1464,17 @@ const ADVICE = [
     body:()=> "この1週間、果物の頻度が少なめです。果物は“買ったら見える場所に置く”だけで摂取頻度が上がりやすい食品です。みかん、バナナ、キウイ、冷凍フルーツのように手間の少ないものから始めましょう。"},
   { pri:3.85, title:"DVS: 油脂の使い方", when:(p,d)=> weeklyDvsMiss("abura",1) && mealRecorded(d) && d.sv["副菜"]>=p.targets["副菜"]*0.6,
     body:()=> "この1週間、油脂の食品群が少なめです。たくさん使う必要はありませんが、野菜に少量のオリーブ油やごま油を合わせると、脂溶性ビタミンを取り入れやすくなります。揚げ物ではなく“小さじ1の質”で考えましょう。"},
-  { pri:4.2, title:"DVSはもう一歩です", when:(p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; },
+  { pri:4.2, title:"DVSはもう一歩です", when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; },
     body:()=> { const v=dvsWeekly(); const names=v.missing.slice(0,2).map(function(g){return g.label;}).join("、"); return "この1週間の食事の多様性得点は" + v.score + "点です。悪くありませんが、あと一段上げるなら「" + names + "」のどちらかを週に2〜3回へ増やすのが近道です。"; } },
-  { pri:4.3, title:"DVSは高めです", when:(p,d)=> { const v=dvsWeekly(); return v.days>=7 && v.score>=8 && mealRecorded(d) && dayScore(d,p.targets)<70; },
+  { pri:4.3, title:"DVSは高めです", when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=8 && mealRecorded(d) && dayScore(d,p.targets)<70; },
     body:()=> "食品の種類はかなり広く取れています。一方で今日の皿数バランスは少し崩れています。多様性が高い人は土台が強いので、次は主食・主菜・副菜の量を整えるだけで、かなり完成度が上がります。"},
   { pri:4.6, title:"睡眠不足と食欲", when:(p,d)=> sleepRecorded(d) && sleepDur(d.sleep)<6 && mealRecorded(d),
     body:()=> "睡眠が6時間未満の日は、甘いものや脂っこいものを欲しやすくなることがあります。今日の食欲が強かったとしても、意志の問題だけではありません。今夜は15分早く布団に入ることを、食事改善の一部として扱いましょう。"},
   { pri:4.7, title:"夜中の目覚めと夕食", when:(p,d)=> sleepRecorded(d) && (d.sleep.awak||0)>=2 && !d.meals.dinner.skipped && d.meals.dinner.time>=21,
     body:()=> "夜中の目覚めがあり、夕食も遅めです。寝る直前まで胃が動いていると、眠りが浅くなることがあります。帰宅が遅い日は、夕方に主食を少し先取りし、帰宅後は汁物と主菜中心にする分食が合いやすいです。"},
-  { pri:4.8, title:"記録の精度を上げる一歩", when:(p,d)=> snackOnly(d),
+  { pri:4.8, title:"記録の精度を上げる一歩", key:"補食の記録", when:(p,d)=> snackOnly(d),
     body:()=> "補食や控えたい間食だけでも記録できているのは大事です。次は、前後どちらかの食事を1回だけ入れると、補食が“栄養を補うもの”なのか、“空腹や疲れで増えているもの”なのかが見えやすくなります。"},
-  { pri:1.5, title:"食品の種類を少しだけ広げてみましょう", when:(p,d)=> { const v=dvsWeekly(); const used=DVS_GROUPS.some(function(g){return v.freq[g.id]>0;}); return v.days>=7 && used && v.score<=3; },
+  { pri:1.5, title:"食品の種類を少しだけ広げてみましょう", when:(p,d)=> { const v=dvsWeekly(); const used=DVS_GROUPS.some(function(g){return v.freq[g.id]>0;}); return v.computable && used && v.score<=3; },
     body:(p)=> { const v=dvsWeekly(); const names=v.missing.slice(0,3).map(function(g){return g.label;}).join("、");
       return "この1週間の食事の多様性得点は" + v.score + "点（10点満点）でした。特に「" + names + "」をほとんど食べていません。完璧を目指さず、このうち1つを今週どこかの食事に混ぜるところから始めましょう。"; } },
 ];
@@ -1426,48 +1491,59 @@ function addAdviceVariants(basePri, title, when, variants){
     });
   });
 }
-addAdviceVariants(5.05, "朝食の整え方", (p,d)=> d.meals.breakfast.skipped || (!d.meals.breakfast.skipped && d.meals.breakfast.time>=10), [
+addAdviceVariants(5.05, "朝食の整え方", (p,d)=> d.meals.breakfast.skipped, [
   "朝食は量よりも、朝の合図としての役割が大切です。食べられない日は、牛乳、ヨーグルト、バナナ、具だくさん味噌汁のどれか一つで十分です。",
   "朝に食欲が出ない日は、前夜の夕食時刻や夜の間食が影響していることがあります。朝を責めるより、夜を少し軽くする視点で見てみましょう。",
   "朝食を整えるなら、主食、乳製品、果物の3点セットが最短です。パン、ヨーグルト、バナナなら、火を使わずに形になります。",
-  "朝食が遅くなりやすい日は、起床後すぐに飲み物だけ入れる作戦が使えます。牛乳や白湯でも、体内時計には朝の合図になります。",
   "朝食を抜く日が続くと、昼以降の空腹が強くなりやすいです。まずは“食べる”ではなく“置いておく”から始めましょう。",
   "朝に甘い菓子パンだけになりやすい日は、飲み物を牛乳や無糖カフェラテにするだけでも栄養の向きが少し戻ります。",
   "朝の準備時間がない日は、前夜にヨーグルトと果物を同じ場所へ置くと、考えずに食べ始められます。",
-  "休日に朝食時刻が大きくずれる人は、食べる量より時刻を少し揃えるほうが睡眠リズムに効きやすいです。",
   "朝に食べられない日は、食事ではなく飲み物から始めても構いません。牛乳、豆乳、白湯のように、体を起こす合図を一つ決めましょう。",
   "朝食を作る余裕がない週は、作るものを考えず、買って置けるものに寄せましょう。ヨーグルト、バナナ、チーズ、ゆで卵が候補です。",
   "朝に菓子パンが続く時は、急にやめるより、横に乳製品を足すほうが現実的です。足してから減らす順番で十分です。",
   "朝食の目標は、豪華な献立ではなく、昼まで体を支えることです。主食か乳製品のどちらかが入れば一歩進んでいます。",
   "朝の時間が読みにくい人は、前夜のうちに“明日の朝に口に入れるもの”を一つだけ決めておくと迷いが減ります。",
   "起床後すぐ食べるのが苦手なら、朝食を二段階にしても大丈夫です。起きて飲み物、通勤後にヨーグルトのように分けましょう。",
-  "朝食が遅い日ほど、昼食を抜いて帳尻を合わせないほうが安定します。軽い昼食か補食を予定に入れておきましょう。",
   "朝の記録が空きやすい人は、最初に時刻だけ入れる方法も使えます。時刻が見えると、食事内容の整え方も考えやすくなります。"
 ]);
-addAdviceVariants(5.15, "昼食と夕食のリズム", (p,d)=> mealRecorded(d) && (d.meals.lunch.skipped || d.meals.dinner.skipped || (!d.meals.dinner.skipped && d.meals.dinner.time>=21) || eatingSpan(d.meals)>=12), [
+addAdviceVariants(5.06, "朝食が遅めの日の整え方", (p,d)=> !d.meals.breakfast.skipped && d.meals.breakfast.time>=10 && mealRecorded(d), [
+  "朝食が遅くなりやすい日は、起床後すぐに飲み物だけ入れる作戦が使えます。牛乳や白湯でも、体内時計には朝の合図になります。",
+  "休日に朝食時刻が大きくずれる人は、食べる量より時刻を少し揃えるほうが睡眠リズムに効きやすいです。",
+  "朝食が遅い日ほど、昼食を抜いて帳尻を合わせないほうが安定します。軽い昼食か補食を予定に入れておきましょう。",
+  "朝食が遅れる日は、起きてすぐの一口（牛乳、白湯、果物）を先に入れると、体内時計への合図が早まります。",
+  "朝の準備時間がない日は、前夜にヨーグルトと果物を同じ場所へ置くと、考えずに食べ始められます。",
+  "朝の時間が読みにくい人は、前夜のうちに“明日の朝に口に入れるもの”を一つだけ決めておくと迷いが減ります。"
+]);
+addAdviceVariants(5.15, "昼食を抜いた日のリズム", (p,d)=> mealRecorded(d) && d.meals.lunch.skipped, [
   "昼食を抜くと、夕方の補食や菓子類が増えやすくなります。忙しい日は、おにぎり半分と卵だけでも“昼の保険”になります。",
-  "夕食が遅い日は、補食をうまく使うと帰宅後の食べ過ぎを防げます。夕方に主食を少し、帰宅後に主菜と副菜の形が現実的です。",
-  "食べている時間帯が長い日は、最後の一口を15分だけ前にするだけでも十分です。大きな変更より、小さな前倒しが続きます。",
-  "夜遅い食事の日は、汁物を具だくさんにすると、少ない量でも満足感が出やすいです。主食は小さめで十分です。",
   "昼が軽すぎると、夜の主食や菓子類が増えやすくなります。昼に主菜を一つ足すことは、夜を整える準備でもあります。",
-  "夕食を抜いた日は、翌朝の空腹や夜間覚醒につながることがあります。軽くても、豆腐、卵、魚缶、味噌汁のどれかは残したいところです。",
+  "昼食を抜いた日は、夜に整えようとしても空腹が先に出やすいです。翌日は昼に小さな主食と主菜を入れる作戦が有効です。"
+]);
+addAdviceVariants(5.16, "夕食が遅い日のリズム", (p,d)=> mealRecorded(d) && !d.meals.dinner.skipped && d.meals.dinner.time>=21, [
+  "夕食が遅い日は、補食をうまく使うと帰宅後の食べ過ぎを防げます。夕方に主食を少し、帰宅後に主菜と副菜の形が現実的です。",
+  "夜遅い食事の日は、汁物を具だくさんにすると、少ない量でも満足感が出やすいです。主食は小さめで十分です。",
   "外食で夕食が遅くなる日は、帰る前にメニューを決めておくと、食べ始めが早まりやすいです。迷う時間も食事時刻の一部です。",
   "夕食後にだらだら食べが続く日は、食事の終わりを決める合図が必要かもしれません。温かいお茶、歯みがき、片づけのどれかを使いましょう。",
   "夕食が遅くなる週は、昼の主菜を抜かないことが夜の食べすぎ予防になります。昼に卵や魚を一つ入れておきましょう。",
   "会議や残業で夕食時刻が読めない日は、補食を非常用ではなく予定として入れるほうが整いやすいです。",
   "夜が遅い日は、帰宅後に料理を考えない設計が大切です。冷凍ごはん、豆腐、具だくさん汁のような型を一つ決めましょう。",
-  "昼食を抜いた日は、夜に整えようとしても空腹が先に出やすいです。翌日は昼に小さな主食と主菜を入れる作戦が有効です。",
   "夕食が遅い日に甘い飲み物が欲しくなる場合、空腹と眠気が重なっている可能性があります。先に水かお茶を入れてから選びましょう。",
-  "食べる時間帯が長い日は、朝を遅らせるより夜を少し早く閉じるほうが体内時計には合いやすいです。",
-  "外食が続く日は、夕食だけで完璧に戻そうとせず、朝に乳製品、昼に副菜を先取りするほうが現実的です。",
-  "帰宅後の夕食が重くなりやすい人は、夕方に主食を少し先取りし、帰宅後は汁物と主菜で終える型を試しましょう。"
+  "帰宅後の夕食が重くなりやすい人は、夕方に主食を少し先取りし、帰宅後は汁物と主菜で終える型を試しましょう。",
+  "夜遅い日は主食を少なめにし、夕方の補食で少し先取りする分食が使えます。"
 ]);
-addAdviceVariants(5.25, "副菜と食物繊維", (p,d)=> mealRecorded(d) && (d.sv["副菜"] < p.targets["副菜"] || Object.values(d.sv).filter(v=>v>0).length<=3 || weeklyDvsMiss("kaiso",1) || weeklyDvsMiss("imo",1) || weeklyDvsMiss("daizu",1)), [
-  "食物繊維を増やすなら、野菜だけで頑張らなくて大丈夫です。豆、いも、海藻、きのこを足すと、食卓の幅が出ます。",
+addAdviceVariants(5.17, "夕食を抜いた日の整え方", (p,d)=> mealRecorded(d) && d.meals.dinner.skipped, [
+  "夕食を抜いた日は、翌朝の空腹や夜間覚醒につながることがあります。軽くても、豆腐、卵、魚缶、味噌汁のどれかは残したいところです。",
+  "夕食を丸ごと抜くより、具だくさん味噌汁や豆腐のような軽い形に置き換えるほうが、翌朝のリズムを守りやすいです。"
+]);
+addAdviceVariants(5.18, "食べる時間帯の整え方", (p,d)=> mealRecorded(d) && eatingSpan(d.meals)>=12, [
+  "食べている時間帯が長い日は、最後の一口を15分だけ前にするだけでも十分です。大きな変更より、小さな前倒しが続きます。",
+  "食べる時間帯が長い日は、朝を遅らせるより夜を少し早く閉じるほうが体内時計には合いやすいです。",
+  "外食が続く日は、夕食だけで完璧に戻そうとせず、朝に乳製品、昼に副菜を先取りするほうが現実的です。"
+]);
+addAdviceVariants(5.25, "副菜と食物繊維", (p,d)=> mealRecorded(d) && (d.sv["副菜"] < p.targets["副菜"] || Object.values(d.sv).filter(v=>v>0).length<=3), [
   "副菜が足りない日は、切る野菜より、冷凍野菜、海藻、きのこ、具だくさん汁を使うほうが続きやすいです。",
   "食生活指針の考え方では、主食・主菜・副菜をそろえることが土台です。今日は副菜を“料理”ではなく“ひとつかみ”で見てみましょう。",
   "野菜が少ない日でも、味噌汁に冷凍野菜とわかめを入れるだけで、副菜と海藻を同時に拾えます。",
-  "便通や満腹感を整えたい日は、食物繊維を急に増やすより、水分と一緒に少しずつ増やすほうが体に合いやすいです。",
   "生野菜が続かない人は、温野菜や汁物で考えると楽です。温かい副菜は、量を取りやすいのが強みです。",
   "副菜不足は、作る気力の問題ではなく、手前にある選択肢の問題かもしれません。冷凍野菜を冷凍庫の前列に置きましょう。",
   "外食で副菜が少ない日は、帰宅後に果物や海藻スープを足すだけでも、その日の不足を少し拾えます。",
@@ -1480,31 +1556,45 @@ addAdviceVariants(5.25, "副菜と食物繊維", (p,d)=> mealRecorded(d) && (d.s
   "冷蔵庫に野菜がない日は、冷凍野菜、のり、めかぶ、豆腐のどれかで立て直せます。完璧な副菜でなくても構いません。",
   "副菜が少ない週は、毎日違う料理を作るより、同じ具だくさん味噌汁を数日使うほうが現実的です。"
 ]);
+addAdviceVariants(5.26, "海藻・いも・豆で食卓を広げる", (p,d)=> mealRecorded(d) && (weeklyDvsMiss("kaiso",1) || weeklyDvsMiss("imo",1) || weeklyDvsMiss("daizu",1)), [
+  "食物繊維を増やすなら、野菜だけで頑張らなくて大丈夫です。豆、いも、海藻、きのこを足すと、食卓の幅が出ます。",
+  "便通や満腹感を整えたい日は、食物繊維を急に増やすより、水分と一緒に少しずつ増やすほうが体に合いやすいです。",
+  "海藻、いも、豆は“ひとつまみ”の軽さで頻度を作れる食品群です。のり、わかめ、冷凍里いも、納豆が使いやすい入口になります。"
+]);
 addAdviceVariants(5.35, "主菜とたんぱく質", (p,d)=> mealRecorded(d) && (d.sv["主菜"]<=1 || weeklyDvsMiss("sakana",1) || weeklyDvsMiss("tamago",1) || weeklyDvsMiss("daizu",1)), [
   "たんぱく質は肉だけではありません。魚、卵、大豆製品、乳製品をローテーションすると、脂質や塩分の偏りも抑えやすくなります。",
   "主菜が少ない日は、調理しない主菜を使いましょう。納豆、豆腐、ゆで卵、刺身、サバ缶は、忙しい日の味方です。",
-  "高齢期は一度にたくさん食べるより、毎食少しずつたんぱく質を拾うほうが現実的です。補食も立派な補給枠になります。",
   "魚が少ない週は、焼き魚にこだわらなくて大丈夫です。ツナ缶、サバ缶、鮭おにぎり、しらすでも頻度を作れます。",
   "卵は、主菜不足の日に最短で使える食品です。ゆで卵を作り置きするだけで、翌日の食事がかなり楽になります。",
-  "肉料理が多い日は、大豆製品を一回はさむと全体が軽くなります。冷奴や納豆は、減らすより足して整える作戦です。",
-  "増量や筋力維持では、補食にたんぱく質を入れることが大切です。牛乳、ヨーグルト、チーズ、卵を小さく足しましょう。",
-  "主菜が多すぎる日は、量を急に減らすより調理法を変える方が続きます。揚げ物を焼き物、蒸し物、煮物へ寄せましょう。",
   "主菜が少ない日は、冷蔵庫にあるものを料理にするより、すぐ食べられる主菜を一つ足すほうが現実的です。",
   "魚が続かない人は、刺身、缶詰、鮭おにぎり、しらすのように“調理しない魚”からで十分です。",
   "大豆製品は、肉や魚が少ない日の助けになります。納豆、豆腐、枝豆、厚揚げのどれか一つで一歩です。",
   "主菜を増やす時は、塩分や脂質が増えすぎない形を選びましょう。焼く、蒸す、汁物に入れる方法が使いやすいです。"
 ]);
-addAdviceVariants(5.45, "主食とエネルギー", (p,d)=> mealRecorded(d) && (d.sv["主食"]===0 || d.sv["主食"]<=1 || d.sv["主食"] > p.targets["主食"]+1), [
+addAdviceVariants(5.36, "主菜が多めの日", (p,d)=> mealRecorded(d) && d.sv["主菜"] > p.targets["主菜"]+1, [
+  "主菜が多すぎる日は、量を急に減らすより調理法を変える方が続きます。揚げ物を焼き物、蒸し物、煮物へ寄せましょう。",
+  "肉料理が多い日は、大豆製品を一回はさむと全体が軽くなります。冷奴や納豆は、減らすより足して整える作戦です。"
+]);
+addAdviceVariants(5.37, "増量期のたんぱく質", (p,d)=> p.goal==="gain" && mealRecorded(d) && d.sv["主菜"] <= p.targets["主菜"], [
+  "増量や筋力維持では、補食にたんぱく質を入れることが大切です。牛乳、ヨーグルト、チーズ、卵を小さく足しましょう。",
+  "体重を増やす時期は、主菜を一度に増やすより、3食+補食で回数を増やすほうが胃にやさしく続きます。"
+]);
+addAdviceVariants(5.38, "高齢期のたんぱく質", (p,d)=> p.age>=65 && mealRecorded(d) && d.sv["主菜"]<=1, [
+  "高齢期は一度にたくさん食べるより、毎食少しずつたんぱく質を拾うほうが現実的です。補食も立派な補給枠になります。",
+  "年齢を重ねるほど、卵、豆腐、乳製品のような“調理が軽い主菜”が続けやすくなります。1品を定番にしましょう。"
+]);
+addAdviceVariants(5.45, "主食が少なめの日", (p,d)=> mealRecorded(d) && d.sv["主食"]<=1, [
   "主食は減らす対象というより、量を調整する軸です。ゼロにすると、後から甘いものが欲しくなることがあります。",
   "主食が少ない日は、いも類を副菜として入れる形でもエネルギーを補えます。冷凍里いもや焼き芋は使いやすいです。",
-  "主食が多い日は、抜くより普通盛りへ戻すだけで十分です。減らした分は副菜や主菜で満足感を作りましょう。",
   "減量中でも、毎食こぶし一つ分の主食は味方になります。極端に減らすと、継続が難しくなります。",
   "昼に主食が少なすぎると、夕方に菓子類や甘い飲み物へ向かいやすいです。小さなおにぎりは予防策として使えます。",
-  "麺や丼の日は、主食を減らすより、具を増やす視点が合いやすいです。卵、野菜、海藻を足すと一食に近づきます。",
   "朝の主食が難しい日は、バナナやオートミールのように軽いものからでも構いません。",
-  "夜遅い日は主食を少なめにし、夕方の補食で少し先取りする分食が使えます。",
-  "主食を控えたい日は、完全に抜くより量を見える形にするほうが続きます。茶碗を小さくするだけでも十分です。",
   "朝や昼の主食が少なすぎると、夜にまとめて欲しくなることがあります。早い時間に小さく入れるほうが安定します。",
+  "主食を控えたい日は、完全に抜くより量を見える形にするほうが続きます。茶碗を小さくするだけでも十分です。"
+]);
+addAdviceVariants(5.46, "主食が多めの日", (p,d)=> mealRecorded(d) && d.sv["主食"] > p.targets["主食"]+1, [
+  "主食が多い日は、抜くより普通盛りへ戻すだけで十分です。減らした分は副菜や主菜で満足感を作りましょう。",
+  "麺や丼の日は、主食を減らすより、具を増やす視点が合いやすいです。卵、野菜、海藻を足すと一食に近づきます。",
   "主食が多い日は、次の食事で抜いて帳尻を合わせるより、普通量に戻して副菜を足すほうが体にやさしいです。",
   "パンの日は、菓子パンだけでなく、チーズ、卵、ヨーグルトを横に置くと主食だけの食事になりにくいです。"
 ]);
@@ -1544,22 +1634,26 @@ addAdviceVariants(5.65, "果物の使い方", (p,d)=> mealRecorded(d) && (d.sv["
   "菓子類を楽しむ日でも、果物を先に見える場所へ置くと選択肢が増えます。実際に置き換えるかは、その日の体調で決めて大丈夫です。",
   "旬の果物を一つ選ぶと、栄養だけでなく楽しみも増えます。続く習慣は、少し楽しいほうが強いです。"
 ]);
-addAdviceVariants(5.75, "菓子類と嗜好飲料", (p,d)=> snackKindRecorded(d), [
+addAdviceVariants(5.75, "菓子類との付き合い方", (p,d)=> hasSnackKind(d,"confection"), [
   "菓子類や甘い飲み物は、意志の弱さではなく、疲れ、寝不足、昼食不足で出やすくなります。責めるより、前の食事を見ましょう。",
-  "甘い飲み物を減らすなら、最初の1本だけ無糖にする方法が現実的です。全部を変えなくても流れは変わります。",
   "菓子類を食べる日は、小皿に出すだけで量が見えます。見える化は、我慢より続く調整です。",
-  "菓子類と甘い飲み物が重なる日は、まず飲み物を無糖に寄せると負担が小さいです。",
   "夕方に菓子類が欲しい日は、昼食の主菜か主食が少なかった可能性があります。翌日は昼の保険を入れてみましょう。",
   "夜の甘いものは、夕食後の終わりの合図が弱いと出やすいです。歯みがき、温かいお茶、台所の片づけを使いましょう。",
   "買い置きがあると手が伸びやすい人は、家に大袋を置かず、外で1回分だけ買う形が合うことがあります。",
   "菓子類を楽しむ日は残して大丈夫です。食後に小皿で食べる形なら、空腹時より量が増えにくくなります。",
-  "甘い飲み物が続く時は、味を急にゼロにしなくても大丈夫です。小さいサイズ、氷多め、無糖と交互のどれかを選びましょう。",
   "菓子類が夕方に集中する日は、昼食の主食や主菜が少なかった可能性があります。先に昼を見直すほうが近道です。",
-  "寝不足の日は、甘い飲み物や菓子類を欲しやすくなります。体の反応として扱い、まず水分と休息を入れましょう。",
   "コンビニで甘いものを買う日は、最初に果物・ヨーグルト・無糖飲料の棚を見てから選ぶと、選択肢が広がります。",
   "菓子類を減らしたい時は、買う場所と量を変えるのが効果的です。家に大袋を置かず、外で1回分だけにする方法があります。",
-  "甘い飲み物を水分補給として飲んでいる場合は、まず1日の最初の飲み物だけ水かお茶へ寄せましょう。",
-  "夜の菓子類が習慣になっている日は、夕食後すぐに台所を片づけるだけでも流れが変わります。",
+  "夜の菓子類が習慣になっている日は、夕食後すぐに台所を片づけるだけでも流れが変わります。"
+]);
+addAdviceVariants(5.76, "嗜好飲料との付き合い方", (p,d)=> hasSnackKind(d,"sweetDrink"), [
+  "甘い飲み物を減らすなら、最初の1本だけ無糖にする方法が現実的です。全部を変えなくても流れは変わります。",
+  "甘い飲み物が続く時は、味を急にゼロにしなくても大丈夫です。小さいサイズ、氷多め、無糖と交互のどれかを選びましょう。",
+  "寝不足や疲れがある日は、甘い飲み物を欲しやすくなります。体の反応として扱い、まず水分と休息を入れましょう。",
+  "甘い飲み物を水分補給として飲んでいる場合は、まず1日の最初の飲み物だけ水かお茶へ寄せましょう。"
+]);
+addAdviceVariants(5.77, "菓子類と甘い飲み物が重なる日", (p,d)=> hasSnackKind(d,"confection") && hasSnackKind(d,"sweetDrink"), [
+  "菓子類と甘い飲み物が重なる日は、まず飲み物を無糖に寄せると負担が小さいです。",
   "菓子類と嗜好飲料は、ゼロか百かで考えなくて大丈夫です。重なる日を減らすだけでも、体への負担は変わります。"
 ]);
 addAdviceVariants(5.85, "補食の前向きな使い方", (p,d)=> Number(d.snacks||0)>=1, [
@@ -1567,8 +1661,6 @@ addAdviceVariants(5.85, "補食の前向きな使い方", (p,d)=> Number(d.snack
   "補食の目的を決めると選びやすくなります。エネルギーならおにぎり、たんぱく質なら卵、カルシウムならヨーグルトやチーズです。",
   "夕方の補食は、遅い夕食の食べ過ぎを防ぐ味方です。予定された補食なら、だらだら食べとは別物です。",
   "補食が多い日は、前の食事が軽すぎなかったかを見るチャンスです。昼食の主食や主菜を少し足すと変わることがあります。",
-  "増量や筋力維持では、補食は重要な作戦です。胃に負担をかけず、回数で足す発想が合いやすいです。",
-  "高齢期は一食の量が自然に減りやすいので、補食でたんぱく質や乳製品を拾う考え方が役立ちます。",
   "忙しい日は、補食で合計を整える発想で大丈夫です。3食に戻せる日は戻し、難しい日は不足を拾いましょう。",
   "補食は中身が大切です。甘い満足だけでなく、次の食事まで体を支えるものかを見てみましょう。",
   "朝食が軽い日は、午前の補食で乳製品や果物を足すと、午前中の栄養の穴を小さくできます。",
@@ -1580,25 +1672,42 @@ addAdviceVariants(5.85, "補食の前向きな使い方", (p,d)=> Number(d.snack
   "食事量が少ない日ほど、補食は“余計なもの”ではなく“足りない分の調整”になります。前向きに使って大丈夫です。",
   "補食を予定に入れると、だらだら食べとの違いがはっきりします。時間を決めるだけで、同じ内容でも使い方が変わります。"
 ]);
-addAdviceVariants(5.95, "減塩と血圧", (p,d)=> mealRecorded(d) && (p.goal==="bp" || d.sv["主菜"] > p.targets["主菜"]+1 || !d.meals.dinner.skipped && d.meals.dinner.time>=21), [
+addAdviceVariants(5.86, "高齢期の補食の使い方", (p,d)=> p.age>=65 && Number(d.snacks||0)>=1, [
+  "高齢期は一食の量が自然に減りやすいので、補食でたんぱく質や乳製品を拾う考え方が役立ちます。",
+  "食が細くなりやすい時期は、補食を“もう一つの小さな食事”として使うと、無理なく合計を整えられます。"
+]);
+addAdviceVariants(5.87, "増量期の補食", (p,d)=> p.goal==="gain" && Number(d.snacks||0)>=1, [
+  "増量や筋力維持では、補食は重要な作戦です。胃に負担をかけず、回数で足す発想が合いやすいです。",
+  "体重を増やしたい時期の補食は、牛乳、おにぎり、卵、ヨーグルトのように、エネルギーとたんぱく質を同時に拾えるものが向いています。"
+]);
+addAdviceVariants(5.95, "減塩の工夫", (p,d)=> mealRecorded(d) && (p.goal==="bp" || d.sv["主菜"] > p.targets["主菜"]+1 || !d.meals.dinner.skipped && d.meals.dinner.time>=21), [
   "減塩は味を薄くするだけではありません。酸味、香辛料、薬味、だしを使うと、おいしさを残しやすいです。",
   "汁物は具だくさんにすると、汁の量が自然に減り、満足感は残ります。汁を全部飲まないことも立派な調整です。",
   "外食では、漬物、汁、ソース、加工肉のどれか一つを控えめにするだけでも始められます。",
-  "血圧を意識する日は、塩分を減らす作戦と、野菜、果物、海藻、大豆を増やす作戦をセットで考えると食卓が整います。",
   "しょうゆやソースは、かけるより小皿につける形にすると、味を感じながら量を調整できます。",
   "麺類の日は、汁を残す、わかめや卵を足す、野菜を増やす、のどれか一つだけでも十分です。",
   "味が足りない日は、塩を足す前に、レモン、酢、こしょう、しょうが、ねぎを試しましょう。",
   "加工食品が続く週は、家で食べる日に果物や具だくさん汁を足して、全体のバランスを戻しましょう。"
 ]);
+addAdviceVariants(5.96, "血圧と食卓", (p,d)=> p.goal==="bp" && mealRecorded(d), [
+  "血圧を意識する日は、塩分を減らす作戦と、野菜、果物、海藻、大豆を増やす作戦をセットで考えると食卓が整います。",
+  "血圧が気になる時期は、味付けより先に、汁物、加工食品、外食の頻度のどれか一つだけ見直すのが現実的です。"
+]);
 addAdviceVariants(6.05, "水分補給", (p,d)=> mealRecorded(d) || sleepRecorded(d) || snackKindRecorded(d), [
   "水分補給は、のどが渇いてからでは遅れやすいです。朝、昼、夕方のどこかにコップ1杯のタイミングを固定しましょう。",
   "甘い飲み物が水分補給の中心になると、糖質も一緒に積み上がります。水、お茶、炭酸水を見える場所に置きましょう。",
   "暑い日や活動量が多い日は、食事だけでなく水分も記録の一部として意識すると体調を崩しにくくなります。",
-  "寝不足の日は甘い飲み物が欲しくなりやすいです。まず水を数口飲み、10分待ってから選ぶと本当に必要な量が見えます。",
-  "高齢期はのどの渇きを感じにくいことがあります。食事の前後に一口ずつ飲む形が続きやすいです。",
   "カフェイン飲料が多い日は、同じ回数だけ水か麦茶を挟むと、体の負担を減らしやすいです。",
   "外出の日は、飲み物を買う場所より先に、持って出る小さなボトルを決めておくと水分が安定します。",
   "水分補給を甘い飲み物から切り替えるなら、無糖炭酸水や香りのあるお茶も候補になります。"
+]);
+addAdviceVariants(6.06, "高齢期の水分補給", (p,d)=> p.age>=65 && (mealRecorded(d) || sleepRecorded(d)), [
+  "高齢期はのどの渇きを感じにくいことがあります。食事の前後に一口ずつ飲む形が続きやすいです。",
+  "年齢を重ねると、水分は“まとめて”より“こまめに”が体に合います。食卓と枕元に一杯ずつ置いておきましょう。"
+]);
+addAdviceVariants(6.07, "寝不足の日の飲み物", (p,d)=> sleepRecorded(d) && sleepDur(d.sleep)<6, [
+  "寝不足の日は甘い飲み物が欲しくなりやすいです。まず水を数口飲み、10分待ってから選ぶと本当に必要な量が見えます。",
+  "睡眠が短い日のだるさは、飲み物の糖分では戻りにくいです。水分と、可能なら20分の仮眠を先に試しましょう。"
 ]);
 addAdviceVariants(6.15, "DVSと日本型食生活", (p,d)=> mealRecorded(d) && (dvsWeekTracked() || Object.values(d.sv).filter(v=>v>0).length>=3), [
   "食事の多様性は、特別な料理を増やすことではありません。ごはん、具だくさん汁、魚や大豆、小鉢のような形で十分です。",
@@ -1633,8 +1742,60 @@ function adviceKey(a){
   if(/菓子|嗜好飲料|甘い飲み物|間食/.test(raw)) return "菓子類・嗜好飲料";
   if(/補食/.test(raw)) return "補食";
   if(/減塩|血圧/.test(raw)) return "減塩";
-  if(/DVS|多様性|日本型食生活/.test(raw)) return "食事の多様性";
+  if(/DVS|多様性|日本型食生活|食品の種類/.test(raw)) return "食事の多様性";
   return raw || "その他";
+}
+/* --- 文の重なり検出（コメント合成の冗長防止） ---
+   句読点を除いた2つの文字列の最長共通部分文字列長を返す。
+   同じ言い回し(「〜で十分です」の連続など)を機械的に避けるために使う。 */
+function commonRunLen(a,b){
+  a=String(a||"").replace(/[。、！？\s（）()「」]/g,"");
+  b=String(b||"").replace(/[。、！？\s（）()「」]/g,"");
+  var best=0;
+  for(var i=0;i<a.length;i++){
+    for(var j=0;j<b.length;j++){
+      var k=0;
+      while(i+k<a.length && j+k<b.length && a[i+k]===b[j+k]) k++;
+      if(k>best) best=k;
+    }
+  }
+  return best;
+}
+function lastSentence(text){
+  var parts=String(text||"").split("。").filter(function(s){return s.trim();});
+  return parts.length ? parts[parts.length-1] : "";
+}
+/* 締め句を選ぶ。本文の最後の文と言い回しが重なるもの・同日ですでに
+   使ったものは避けて、定型文の繰り返し感が出ないようにする。 */
+function pickSoftener(body, salt, used){
+  var tail=lastSentence(body);
+  var n=SOFTENERS.length;
+  for(var i=0;i<n;i++){
+    var cand=SOFTENERS[(((daySeed+salt)%n)+n+i)%n];
+    if(used && used.indexOf(cand)>=0) continue;
+    if(commonRunLen(tail,cand)>=5) continue;
+    return cand;
+  }
+  return SOFTENERS[(daySeed+salt)%n];
+}
+/* コメントのテーマ分類（同日に同じテーマが並ばないようにするための粗い分類） */
+function noteTopicKey(t){
+  t=String(t||"");
+  if(/朝食|朝は|朝の/.test(t)) return "朝食";
+  if(/乳製品|ヨーグルト|牛乳|チーズ|カフェオレ|カフェラテ|カルシウム/.test(t)) return "乳製品";
+  if(/果物|バナナ|みかん|キウイ|フルーツ/.test(t)) return "果物";
+  if(/菓子|甘い飲み物|嗜好飲料|無糖/.test(t)) return "間食";
+  if(/補食/.test(t)) return "補食";
+  if(/副菜|野菜|わかめ|海藻|きのこ|食物繊維/.test(t)) return "副菜";
+  if(/主菜|卵|豆腐|納豆|魚|肉|たんぱく/.test(t)) return "主菜";
+  if(/主食|ごはん|パン|麺/.test(t)) return "主食";
+  if(/夕食|分食/.test(t)) return "夕食";
+  if(/睡眠|布団|寝|起き/.test(t)) return "睡眠";
+  if(/体重|測/.test(t)) return "体重";
+  if(/種類|グループ|多様性|にぎやか/.test(t)) return "多様性";
+  if(/12時間|時間帯/.test(t)) return "食事時刻";
+  if(/記録/.test(t)) return "記録";
+  return "他";
 }
 function adviceRecentPenalty(a){
   const key = adviceKey(a);
@@ -1653,9 +1814,18 @@ function adviceJitter(a, idx){
   return (stableHash(adviceKey(a) + "|" + TODAY + "|" + (a.variant||idx)) % 100) / 5000;
 }
 function selectAdvice(candidates){
-  return candidates.map(function(a, idx){
+  var scored = candidates.map(function(a, idx){
     return { a:a, score:a.pri + adviceRecentPenalty(a) + adviceJitter(a, idx) };
-  }).sort(function(x,y){ return x.score-y.score; }).slice(0,2).map(function(x){ return x.a; });
+  }).sort(function(x,y){ return x.score-y.score; });
+  // 同じ日に同系統(朝食×2、間食×2など)の助言が並ばないよう、カテゴリを重複させずに2件選ぶ
+  var out=[], usedKeys={};
+  for(var i=0;i<scored.length && out.length<2;i++){
+    var k=adviceKey(scored[i].a);
+    if(usedKeys[k]) continue;
+    usedKeys[k]=1;
+    out.push(scored[i].a);
+  }
+  return out;
 }
 function rememberAdviceHistory(list){
   if(!Array.isArray(S.adviceHistory)) S.adviceHistory = [];
@@ -1828,7 +1998,7 @@ const NEXT = [
     "明日は果物を買うなら、切らずに食べられるものを。例：みかん、バナナ、キウイ、ぶどう。手間が少ないほど続きます。",
     "明日は夕食後の定位置に果物を置きましょう。菓子類を我慢するより、先に選びやすいものを置く作戦です。",
     "明日は冷凍フルーツをヨーグルトにのせましょう。果物と乳製品を同時に満たせます。"]},
-  { pri:4.3, when:(p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; }, v:[
+  { pri:4.3, when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; }, v:[
     "明日はDVSの空欄を1つだけ埋めましょう。例：海藻ならのり、卵ならゆで卵、乳製品ならヨーグルト。1群だけで十分です。",
     "明日は記録画面の10食品群を見てから買い物へ。空欄の食品を1つだけカゴに入れると、多様性を上げやすくなります。",
     "明日は“いつもの食事に1つ足す”でいきましょう。ごはんにのり、味噌汁にわかめ、昼にヨーグルト。料理を増やさない作戦です。"]},
@@ -2105,7 +2275,7 @@ addNextVariants(5.12, (p,d)=> sleepRecorded(d) && (d.sleep.awak||0)>=2, [
   "明日は夕方の補食で空腹を整え、寝る前の食事を減らしましょう。",
   "今夜は寝室に食べ物を持ち込まない形を試しましょう。"
 ]);
-addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score<=3; }, [
+addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score<=3; }, [
   "明日はDVSの空欄を1つだけ埋めましょう。のり、卵、ヨーグルトのどれかです。",
   "明日は10食品群を見て、食べていない群を一つ買い物カゴに入れましょう。",
   "明日は味噌汁にわかめと卵を入れて、2群を一度に拾いましょう。",
@@ -2115,7 +2285,7 @@ addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && 
   "明日は外食でも小鉢つき定食を選び、食品群を広げましょう。",
   "明日は全部埋めず、一番簡単な空欄だけを埋めましょう。"
 ]);
-addNextVariants(5.32, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; }, [
+addNextVariants(5.32, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; }, [
   "明日はDVSをあと1点上げる日です。足りない群を一つだけ固定しましょう。",
   "明日は海藻ならのり、卵ならゆで卵、乳製品ならヨーグルトで足しましょう。",
   "明日は同じ料理に具を一つ足しましょう。味噌汁にわかめか卵です。",
@@ -2239,13 +2409,13 @@ addNextVariants(4.88, (p,d)=> p.goal==="gain" && d.sv["主菜"]<=1, [
   "明日は朝食に主食と乳製品をそろえ、昼か夜に卵を1つ足しましょう。",
   "明日は食べる量が増やせない時ほど、主菜と乳製品を小さく分けて足しましょう。"
 ]);
-addNextVariants(5.18, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score<=3 && mealRecorded(d); }, [
+addNextVariants(5.18, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score<=3 && mealRecorded(d); }, [
   "明日はDVSを一気に上げようとせず、のり、卵、ヨーグルトの中から一つだけ足しましょう。",
   "明日は味噌汁に、わかめ、豆腐、卵のどれか一つを入れて食品群を増やしましょう。",
   "明日は買い物前に10食品群を見て、空欄の中で一番簡単なものだけ買いましょう。",
   "明日は多様性を量でなく種類で増やします。小さく足すだけで十分です。"
 ]);
-addNextVariants(5.36, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6 && dayScore(d,p.targets)<70; }, [
+addNextVariants(5.36, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6 && dayScore(d,p.targets)<70; }, [
   "明日は食品群は少し広がっているので、皿数の形を整えましょう。主食、主菜、副菜を1回そろえます。",
   "明日はDVSの空欄を一つ埋めながら、副菜も半皿足しましょう。めかぶや具だくさん汁が使えます。",
   "明日は種類を増やすだけでなく、1食の形を作る日です。おにぎり、卵、具だくさん味噌汁が候補です。",
@@ -2396,17 +2566,55 @@ function buildNotes(p, d, weekScores, ctx){
           : "食習慣の研究では、記録を続けること自体が行動変容のいちばんの推進力とされています。この調子で、無理なく積み重ねていきましょう。") });
   }
   // 1) ほめ言葉: 事実 + その延長線上のメリット（量・質・タイミング・規則性）
+  //    ・2件目は「導入句」「事実のテーマ」が1件目と重ならないものだけを採用する
+  //    ・前日に見せた事実テーマ・導入句はできるだけ避け、連日同じ文面になるのを防ぐ
   const facts = FACTS.filter(f => f.when(p,d,ctx));
-  if(facts.length){
-    const f1 = pick(facts, 1 + (saltBase % 997));
-    notes.push({ tone:"praise", title:"今日のよかったこと",
-      body: pick(OPENINGS, 2 + (saltBase % 991)) + (typeof f1.fact==="function"?f1.fact(p,d,ctx):f1.fact) + (f1.benefits[p.goal] || f1.benefits["default"]) });
-    if(facts.length >= 2){
-      let f2 = pick(facts, 2 + (Math.floor(saltBase/7) % 997));
-      if(f2 === f1) f2 = facts[(facts.indexOf(f1)+1) % facts.length];
-      notes.push({ tone:"praise", title:"よかったこと、もうひとつ",
-        body: pick(OPENINGS, 6 + (Math.floor(saltBase/11) % 991)) + (typeof f2.fact==="function"?f2.fact(p,d,ctx):f2.fact) + (f2.benefits[p.goal] || f2.benefits["default"]) });
+  const factText = f => (typeof f.fact==="function"?f.fact(p,d,ctx):f.fact);
+  const ydKey = dateKey(new Date(now.getTime() - 86400000));
+  const yesterPraise = (S.praiseHistory||[]).filter(function(h){ return h && h.date===ydKey; });
+  const yesterKeys = yesterPraise.map(function(h){ return h.key; });
+  const yesterOpens = yesterPraise.map(function(h){ return h.open; });
+  const praiseToday = [];
+  const pickOpening = function(salt, avoid){
+    let o = pick(OPENINGS, salt);
+    let guard = 0;
+    while((avoid.indexOf(o)>=0 || yesterOpens.indexOf(o)>=0) && guard<OPENINGS.length){
+      o = OPENINGS[(OPENINGS.indexOf(o)+1) % OPENINGS.length];
+      guard++;
     }
+    return o;
+  };
+  if(facts.length){
+    // 前日に見せたテーマ以外を優先（候補がそれしか無ければそのまま使う）
+    const freshFacts = facts.filter(function(f){ return yesterKeys.indexOf(noteTopicKey(factText(f)))<0; });
+    const pool1 = freshFacts.length ? freshFacts : facts;
+    const f1 = pick(pool1, 1 + (saltBase % 997));
+    const key1 = noteTopicKey(factText(f1));
+    const open1 = pickOpening(2 + (saltBase % 991), []);
+    praiseToday.push({ date:TODAY, key:key1, open:open1 });
+    notes.push({ tone:"praise", title:"今日のよかったこと",
+      body: open1 + factText(f1) + (f1.benefits[p.goal] || f1.benefits["default"]) });
+    if(facts.length >= 2){
+      let f2 = null;
+      const scan = freshFacts.length>1 ? freshFacts : facts;
+      const start = 2 + (Math.floor(saltBase/7) % 997);
+      for(let i=0;i<scan.length;i++){
+        const cand = scan[(start+i) % scan.length];
+        if(cand===f1) continue;
+        if(noteTopicKey(factText(cand))===key1) continue;   // 同じテーマのほめ言葉は重ねない
+        f2 = cand; break;
+      }
+      if(f2){
+        const open2 = pickOpening(6 + (Math.floor(saltBase/11) % 991), [open1]);
+        praiseToday.push({ date:TODAY, key:noteTopicKey(factText(f2)), open:open2 });
+        notes.push({ tone:"praise", title:"よかったこと、もうひとつ",
+          body: open2 + factText(f2) + (f2.benefits[p.goal] || f2.benefits["default"]) });
+      }
+    }
+    // 今日の選択を記録（選択は日内で決定論的なので、当日分は置き換えるだけでよい）
+    const kept = (S.praiseHistory||[]).filter(function(h){ return h && h.date!==TODAY; });
+    S.praiseHistory = kept.concat(praiseToday).slice(-8);
+    save();
   }
   // 2) 週の流れのほめ言葉（条件付き）
   const good = weekScores.filter(s=>s>=70).length;
@@ -2419,12 +2627,25 @@ function buildNotes(p, d, weekScores, ctx){
       ], 14 + (Math.floor(saltBase/13) % 997)) });
   }
   // 3) アドバイス（最大2件）: 時期別前置き + 本文 + 締め句
+  //    ・前置きと締め句は2件で同じものを使わない
+  //    ・本文が「観察+理由+一手+締め」の合成式(composed)のときは、締め句を重ねない
+  //    ・締め句は本文の最後の文と言い回しが重ならないものを選ぶ
   const adv = selectAdvice(ADVICE.filter(a=>a.when(p,d)));
   rememberAdviceHistory(adv);
+  const usedPrefix=[], usedSoftener=[];
   adv.forEach((a,i)=>{
     const aSalt = commentSalt(p,d,"advice|" + adviceKey(a) + "|" + i);
-    notes.push({ tone:"advice", title:a.title,
-      body: pick(STAGE_PREFIX[p.stage], 3+i+(aSalt%997)) + a.body(p,d) + pick(SOFTENERS, 5+i+(Math.floor(aSalt/17)%997)) });
+    const prefixes = STAGE_PREFIX[p.stage];
+    let prefix = pick(prefixes, 3+i+(aSalt%997));
+    if(usedPrefix.indexOf(prefix)>=0) prefix = prefixes[(prefixes.indexOf(prefix)+1) % prefixes.length];
+    usedPrefix.push(prefix);
+    const body = a.body(p,d);
+    let softener = "";
+    if(!a.composed){
+      softener = pickSoftener(body, 5+i+(Math.floor(aSalt/17)%997), usedSoftener);
+      usedSoftener.push(softener);
+    }
+    notes.push({ tone:"advice", title:a.title, body: prefix + body + softener });
   });
   // 4) 旬のひとこと（3日に1回・枠が空いているとき）
   if(mealRecorded(d) && daySeed%3===0 && notes.length<4){
@@ -2435,13 +2656,25 @@ function buildNotes(p, d, weekScores, ctx){
 }
 function buildNext(p,d){
   /* 優先度順に最大2件のおすすめを返す。
-     完璧な日(汎用メッセージのみ該当)は1件にとどめ、
-     具体的な助言があるときは汎用メッセージを2件目に混ぜない */
+     ・完璧な日(汎用メッセージのみ該当)は1件にとどめ、
+       具体的な助言があるときは汎用メッセージを2件目に混ぜない
+     ・2件が同じテーマ(朝食×2、乳製品×2など)や似た言い回しに
+       ならないよう、テーマと文面の重なりを見て選ぶ */
   const matched = NEXT.filter(x=>x.when(p,d)).sort((a,b)=>a.pri-b.pri);
-  const out = [];
+  const out = [], topics = [];
   const saltBase = commentSalt(p,d,"next");
-  if(matched[0]) out.push(pick(matched[0].v, 7 + (saltBase % 997)));
-  if(matched[1] && matched[1].pri < 9) out.push(pick(matched[1].v, 8 + (Math.floor(saltBase/23) % 997)));
+  for(let i=0;i<matched.length && out.length<2;i++){
+    if(out.length===1 && matched[i].pri >= 9) break;
+    const salt = out.length===0 ? 7 + (saltBase % 997) : 8 + (Math.floor(saltBase/23) % 997);
+    const tx = pick(matched[i].v, salt);
+    const tk = noteTopicKey(tx);
+    if(out.length===1){
+      if(tk!=="他" && topics.indexOf(tk)>=0) continue;
+      if(commonRunLen(out[0], tx)>=12) continue;
+    }
+    topics.push(tk);
+    out.push(tx);
+  }
   return out.length ? out : null;
 }
 
@@ -2478,7 +2711,7 @@ function totalRecordedDays(){
    ・減点（Lv30以降）: レベル30以上のあいだは、未記録の日や
      不摂生な日（低スコア・朝食欠食・遅い夕食・副菜不足・DVS低値・
      控えたい間食・睡眠不足）に、XPが比例減衰する。ペナルティ率は
-     急落しすぎないよう従来より緩め、降格時は肩書を「無職」とする。
+     急落しすぎないよう従来より緩め、降格時は肩書を「研究生」とする。
      ペナルティが高い日は獲得XPも25〜75%に抑え、記録だけの上昇を防ぐ。
      「最初は上がりやすく、上に行くほど健康的な生活の継続が必要で、
       続かなければ偏差値も肩書も落ちる。ただしLv30までは既得の足場」設計。
@@ -2555,7 +2788,7 @@ function penaltyMult(L){
 }
 function applyXPPenalty(xp, pen, lvlNow){
   if(lvlNow<30 || pen<=0) return xp;
-  var floor = cumXP(29); // 助教から落ちた場合は「無職」表示に入れる
+  var floor = cumXP(29); // 助教から落ちた場合は「研究生」表示に入れる
   var excess = xp - floor;
   if(excess<=0) return xp;
   var fixed = pen>=8 ? 4 : (pen>=6 ? 3 : (pen>=3 ? 2 : 1));
@@ -2713,7 +2946,7 @@ function hasHeldAssistant(){
   return (S.maxLevelEver||0)>=30 || (S.lastLevel||0)>=30 || (S.checkups||[]).indexOf(30)>=0;
 }
 function displayLevelTitle(L){
-  return (L<30 && hasHeldAssistant()) ? "無職" : levelTitle(L);
+  return (L<30 && hasHeldAssistant()) ? "研究生" : levelTitle(L);
 }
 function dayIndexFromKey(k){
   const p = String(k||"").split("-").map(Number);
@@ -3070,8 +3303,10 @@ function sleepNote(p, today){
         "約"+dur+"時間の睡眠でした。寝不足の翌日は甘いものや脂っこいものを欲しやすくなることが知られています。今日の間食が増えそうなら、それは意志ではなく寝不足のせいかもしれません。",
       ], 20) });
     } else if(dur > 9){
-      out.push({ tone:"advice", title:"昨晩の睡眠時間", body:
-        "昨晩は約"+dur+"時間と長めでした。長すぎる睡眠や寝床で過ごす時間が長いことは、かえって調子を崩すことがあると睡眠ガイドでは注意を促しています。日中に活動的に過ごすと、夜の眠りが深まります。" });
+      out.push({ tone:"advice", title:"昨晩の睡眠時間", body: pick([
+        "昨晩は約"+dur+"時間と長めでした。長すぎる睡眠や寝床で過ごす時間が長いことは、かえって調子を崩すことがあると睡眠ガイドでは注意を促しています。日中に活動的に過ごすと、夜の眠りが深まります。",
+        "約"+dur+"時間と、やや長めの睡眠でした。疲れがたまっている時期は自然なことですが、続く場合は、朝の光を浴びる・日中に体を動かす時間を作ると、睡眠の質そのものが整いやすくなります。",
+      ], 22) });
     } else {
       out.push({ tone:"praise", title:"昨晩の睡眠時間", body: pick([
         "昨晩は約"+dur+"時間の睡眠。成人に推奨される時間をしっかり確保できています。十分な睡眠は食欲のバランスを整え、健康的な食生活を続ける土台になります。",
@@ -3081,8 +3316,10 @@ function sleepNote(p, today){
   }
   // --- 質(中途覚醒) ---
   if(today.sleep && today.sleep.awak>=3){
-    out.push({ tone:"advice", title:"夜中の目覚め", body:
-      "昨晩は夜中に"+today.sleep.awak+"回目が覚めたのですね。就寝直前の夜食やお酒は、眠りを浅くして夜間の目覚めを増やすことが知られています。夕食を早めにすると、睡眠の質も上がりやすくなります。" });
+    out.push({ tone:"advice", title:"夜中の目覚め", body: pick([
+      "昨晩は夜中に"+today.sleep.awak+"回目が覚めたのですね。就寝直前の夜食やお酒は、眠りを浅くして夜間の目覚めを増やすことが知られています。夕食を早めにすると、睡眠の質も上がりやすくなります。",
+      "夜中に"+today.sleep.awak+"回目が覚めています。目が覚めること自体を責める必要はありませんが、夕食の時刻・お酒・寝る前の水分のどれかを少し調整すると、朝の回復感が変わることがあります。",
+    ], 22) });
   }
   // --- タイミング(ソーシャルジェットラグ) ---
   // 平日/休日のズレが大きい場合は、SRIが高くても先に注意喚起する。
@@ -3365,6 +3602,7 @@ function weightHistory(){
 
 /* --- オンボーディング --- */
 let form = { name:"", age:"", sexF:false, height:"", weight:"", pal:"mid", goal:null, stage:null };
+let formError = "";
 function renderOnboarding(){
   const ready = form.age && form.height && form.weight && form.goal && form.stage;
   view.innerHTML = '<div class="fadein">' +
@@ -3390,6 +3628,7 @@ function renderOnboarding(){
         STAGES.map(s=>'<button class="opt' + (form.stage===s.id?" on":"") + '" data-stage="' + s.id + '">' + s.q + '</button>').join("") +
       '</div>' +
     '</div>' +
+    (formError ? '<div style="margin-top:14px;background:#FBF1F1;border:1px solid var(--ume);border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.8;color:var(--ume)">' + esc(formError) + '</div>' : '') +
     '<button class="btn-main" id="f_go"' + (ready?"":" disabled") + ' style="margin-top:16px">' +
       (ready?"アセスメント結果を見る":"年齢・身長・体重・目標・お気持ちを入力してください") + '</button>' +
     '</div></div>';
@@ -3404,8 +3643,12 @@ function renderOnboarding(){
     sync();
     if(!(form.age&&form.height&&form.weight&&form.goal&&form.stage)) return;
     const w=+form.weight,h=+form.height,a=+form.age;
-    const e0 = Math.round(bmr(w,h,a,form.sexF)*PAL[form.pal]/10)*10;
-    const energy = form.goal==="loss"? e0-300 : form.goal==="gain"? e0+300 : e0;
+    const err = profileInputError(a,h,w,form.goal);
+    if(err){ formError=err; renderOnboarding(); return; }
+    formError="";
+    const b0 = bmr(w,h,a,form.sexF);
+    const e0 = Math.round(b0*PAL[form.pal]/10)*10;
+    const energy = targetEnergy(e0, form.goal, b0);
     S.profile = { name:form.name, age:a, sexF:form.sexF, height:h, weight:w, pal:form.pal,
       goal:form.goal, stage:form.stage, bmi:w/Math.pow(h/100,2), energy, targets:svTargets(energy) };
     save(); render();
@@ -3454,7 +3697,7 @@ function renderHome(){
   if(S.lastLevel===undefined){ S.lastLevel=LV.level; save(); }
   const prevLevel = S.lastLevel;
   const heldBefore = hasHeldAssistant();
-  const titleForLevel = function(L){ return (L<30 && heldBefore) ? "無職" : levelTitle(L); };
+  const titleForLevel = function(L){ return (L<30 && heldBefore) ? "研究生" : levelTitle(L); };
   const leveledUp = LV.level > S.lastLevel;
   const leveledDown = LV.level < S.lastLevel && !LV.gate;
   if((S.maxLevelEver||0) < LV.level){ S.maxLevelEver = LV.level; save(); }
@@ -3474,7 +3717,7 @@ function renderHome(){
         '<div style="font-size:12px;line-height:1.8;color:var(--sub)">「' + esc(pj.t) + '」<br>' +
         (pj.ok ? "記録から確認できました。この達成は健康偏差値にしっかり刻まれています。今週の約束も「計画」から選びましょう。"
                : "挑んだこと自体が前進です。今週は難易度★1の約束から立て直すのも良い作戦です。「計画」で選び直せます。") +
-        '</div></div></div>' : "") +
+        '</div><button id="pjOk" style="margin-top:10px;padding:8px 22px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--sub);font-size:12px;font-weight:700">OK</button></div></div>' : "") +
     (pj && pj.type==="ask" ?
       '<div class="card fadein" style="border:1.5px solid var(--yuzu);background:#FFFCF4">' +
         '<div class="disp" style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:4px">先週の約束、ふりかえり</div>' +
@@ -3502,7 +3745,7 @@ function renderHome(){
         return '<div class="card fadein" style="border:1.5px solid var(--line);background:#FBFBF9;display:flex;align-items:center;gap:14px">' +
           '<div style="font-size:30px">🍃</div>' +
           '<div><div class="disp" style="font-size:14px;font-weight:700;color:var(--ink)">' +
-            (demoted ? '肩書が「' + titleNow + '」' + (titleNow==="無職" ? 'になりました' : 'に戻りました') : '健康偏差値が ' + LV.level + ' に下がりました') +
+            (demoted ? '肩書が「' + titleNow + '」' + (titleNow==="研究生" ? 'になりました' : 'に戻りました') : '健康偏差値が ' + LV.level + ' に下がりました') +
           '</div>' +
           '<div style="font-size:12px;line-height:1.8;color:var(--sub)">ある肩書以降では、生活が乱れた日や記録のない日が続くと偏差値が下がる仕組みです。責めるためではなく、立て直しの合図です。今日の記録から、また積み直していきましょう。</div></div></div>';
       })() : "") +
@@ -3551,6 +3794,7 @@ function renderHome(){
   const ck=$("ckBtn"); if(ck) ck.addEventListener("click",()=>{ checkupMode=true; ckForm=null; render(); });
   const py=$("pjYes"); if(py && pj) py.addEventListener("click",()=>reportPromise(true, pj.d));
   const pn=$("pjNo"); if(pn && pj) pn.addEventListener("click",()=>reportPromise(false, pj.d));
+  const pk=$("pjOk"); if(pk && pj && pj.type==="result") pk.addEventListener("click",()=>{ S.promiseResultAck=pj.week; save(); render(); });
   const adj=$("adjBtn");
   if(adj) adj.addEventListener("click",()=>{
     const p2=S.profile;
@@ -3591,7 +3835,7 @@ function renderRecord(){
             '<div class="disp time-label">昨晩の就寝</div>' +
             '<div class="time-val" id="s_bed">' + (sl.bed==null ? "未入力" : clockLabel(bedVal,{})) + '</div>' +
             '<div class="v-slider"><span class="v-end">翌6:00</span>' +
-              '<input type="range" min="1080" max="1800" step="5" value="' + timeMinutes(bedVal,23) + '" data-sleep="bed">' +
+              '<input type="range" min="1080" max="1800" step="5" value="' + timeMinutes(bedVal,23) + '" data-sleep="bed" aria-label="昨晩の就寝時刻">' +
               '<span class="v-end">18:00</span></div>' +
           '</div>' +
           '<div class="time-col">' +
@@ -3599,7 +3843,7 @@ function renderRecord(){
             '<div class="disp time-label">今朝の起床</div>' +
             '<div class="time-val" id="s_wake">' + (sl.wake==null ? "未入力" : clockLabel(sl.wake,{})) + '</div>' +
             '<div class="v-slider"><span class="v-end">13:00</span>' +
-              '<input type="range" min="180" max="780" step="5" value="' + timeMinutes(sl.wake,7) + '" data-sleep="wake">' +
+              '<input type="range" min="180" max="780" step="5" value="' + timeMinutes(sl.wake,7) + '" data-sleep="wake" aria-label="今朝の起床時刻">' +
               '<span class="v-end">3:00</span></div>' +
           '</div>' +
           '<div class="time-col">' +
@@ -3624,7 +3868,7 @@ function renderRecord(){
           '<div class="disp time-label">' + label + '</div>' +
           '<div class="time-val" id="t_' + id + '" style="color:' + (v.skipped?"var(--line)":"var(--ink)") + '">' + (v.skipped?"—":clockLabel(v.time,{})) + '</div>' +
           '<div class="v-slider"><span class="v-end">翌2:00</span>' +
-            '<input type="range" min="300" max="1560" step="5" value="' + timeMinutes(v.time,12) + '"' + (v.skipped?" disabled":"") + ' data-meal="' + id + '">' +
+            '<input type="range" min="300" max="1560" step="5" value="' + timeMinutes(v.time,12) + '"' + (v.skipped?" disabled":"") + ' data-meal="' + id + '" aria-label="' + label + 'の時刻">' +
             '<span class="v-end">5:00</span></div>' +
           '<button class="skip-btn' + (v.skipped?" on":"") + '" data-skip="' + id + '">' + (v.skipped?"欠食":"食べた") + '</button>' +
         '</div>';
@@ -3684,25 +3928,55 @@ function renderRecord(){
       '</div>' +
       '<input class="input" id="w_in" type="number" step="0.1" placeholder="kg（起床後・排尿後が理想）" value="' + esc(d.weight) + '">' +
     '</div>' +
+    '<div class="card">' +
+      '<div class="section-head">' +
+        '<div style="font-size:26px" aria-hidden="true">⏰</div>' +
+        '<div class="disp" style="font-size:14px;font-weight:700">記録リマインダー</div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--sub);line-height:1.8;margin-bottom:10px">設定した時刻までに今日の食事記録がないときに、お知らせします。</div>' +
+      '<div style="display:flex;gap:10px;align-items:center">' +
+        '<button id="remToggle" class="chip' + (S.reminder.on?" on":"") + '" aria-pressed="' + (S.reminder.on?"true":"false") + '">' + (S.reminder.on?"✓ オン":"オフ") + '</button>' +
+        '<input class="input" type="time" id="remTime" value="' + esc(S.reminder.time) + '" step="300"' + (S.reminder.on?"":" disabled") + ' style="width:auto;flex:0 0 auto" aria-label="リマインダーの時刻">' +
+      '</div>' +
+      (function(){
+        if(!S.reminder.on) return '';
+        const noApi = !("Notification" in window);
+        const perm = noApi ? null : Notification.permission;
+        let line = "";
+        if(noApi) line = "この環境では通知に対応していないため、アプリを開いたときの画面内バナーとアイコンのバッジでお知らせします。";
+        else if(perm==="granted") line = "通知は許可されています。アプリを開いている間は設定時刻にお知らせが表示されます。";
+        else if(perm==="denied") line = "通知がブラウザ側でブロックされています。端末の設定から本アプリの通知を許可すると、ポップアップでお知らせできます（画面内バナーとバッジは動作します）。";
+        else line = "ポップアップ通知を使うには、下のボタンから通知を許可してください。";
+        return '<div style="font-size:11px;color:var(--sub);line-height:1.8;margin-top:10px">' + line + '</div>' +
+          (perm==="default" ? '<button id="remPerm" style="margin-top:8px;width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--green);background:#fff;color:var(--green);font-weight:700;font-size:12px">通知を許可する</button>' : '');
+      })() +
+      '<div class="hint">※ブラウザの仕組み上、アプリを完全に閉じている間はポップアップを表示できません。ホーム画面に追加したアプリでは、未記録のあいだアイコンにバッジ（印）が付き、開いたときには画面内バナーでお知らせします。</div>' +
+    '</div>' +
   '</div>';
 
   if(!d.sleep) d.sleep={bed:null,wake:null,awak:0};
-  view.querySelectorAll("[data-sleep]").forEach(r=> r.addEventListener("input",()=>{
-    const v=hourFromMinutes(r.value);
-    if(r.dataset.sleep==="bed") d.sleep.bed = v==null ? null : (v>=24 ? roundTime5(v-24) : v);   // 24以上は0-6時に正規化
-    else d.sleep.wake = v;
-    save();
-    const el=$(r.dataset.sleep==="bed"?"s_bed":"s_wake"); if(el) el.textContent=clockLabel(v,{});
-    const msg=$("sleepDurationMsg"); if(msg) msg.innerHTML = sleepDurationText(d.sleep);
-  }));
+  view.querySelectorAll("[data-sleep]").forEach(r=>{
+    const commit=()=>{
+      const v=hourFromMinutes(r.value);
+      if(r.dataset.sleep==="bed") d.sleep.bed = v==null ? null : (v>=24 ? roundTime5(v-24) : v);   // 24以上は0-6時に正規化
+      else d.sleep.wake = v;
+      save();
+      const el=$(r.dataset.sleep==="bed"?"s_bed":"s_wake"); if(el) el.textContent=clockLabel(v,{});
+      const msg=$("sleepDurationMsg"); if(msg) msg.innerHTML = sleepDurationText(d.sleep);
+    };
+    ["input","change","pointerup"].forEach(ev=> r.addEventListener(ev, commit));
+  });
   view.querySelectorAll("[data-awak]").forEach(b=> b.addEventListener("click",()=>{
     d.sleep.awak=Math.max(0,Math.min(15,(d.sleep.awak||0)+ +b.dataset.awak)); save(); renderRecord();
   }));
-  view.querySelectorAll("[data-meal]").forEach(r=> r.addEventListener("input",()=>{
-    const v=hourFromMinutes(r.value);
-    d.meals[r.dataset.meal].time = v; save();
-    const el=$("t_"+r.dataset.meal); if(el) el.textContent=clockLabel(v,{});
-  }));
+  view.querySelectorAll("[data-meal]").forEach(r=>{
+    const commit=()=>{
+      const v=hourFromMinutes(r.value);
+      d.meals[r.dataset.meal].time = v; save();
+      const el=$("t_"+r.dataset.meal); if(el) el.textContent=clockLabel(v,{});
+    };
+    ["input","change","pointerup"].forEach(ev=> r.addEventListener(ev, commit));
+  });
   view.querySelectorAll("[data-skip]").forEach(b=> b.addEventListener("click",()=>{
     const m=d.meals[b.dataset.skip]; m.skipped=!m.skipped; save(); renderRecord();
   }));
@@ -3723,6 +3997,20 @@ function renderRecord(){
     save(); renderRecord();
   }));
   $("w_in").addEventListener("change",()=>{ d.weight=$("w_in").value; save(); });
+  $("remToggle").addEventListener("click",()=>{
+    S.reminder.on = !S.reminder.on;
+    save(); updateBadge();
+    // オンにした瞬間に、まだ聞いていなければ通知許可を求める(ユーザー操作起点)
+    if(S.reminder.on && ("Notification" in window) && Notification.permission==="default"){
+      Notification.requestPermission().finally(()=>renderRecord());
+    } else renderRecord();
+  });
+  $("remTime").addEventListener("change",()=>{
+    const v=$("remTime").value;
+    if(/^\d{1,2}:\d{2}$/.test(v)){ S.reminder.time=v; save(); updateBadge(); }
+  });
+  const rp=$("remPerm");
+  if(rp) rp.addEventListener("click",()=>{ Notification.requestPermission().finally(()=>renderRecord()); });
 }
 
 /* --- 計画 --- */
@@ -3796,17 +4084,28 @@ function weekDays(w){
   return out;
 }
 function pendingPromiseJudgment(){
-  if(!S.promise || S.promiseWeek===undefined || WEEK_IDX<=S.promiseWeek) return null;
   S.promiseLog = S.promiseLog||[];
-  if(S.promiseLog.some(function(e){return e.week===S.promiseWeek;})) return null;
-  const def = PROMISE_POOL.find(function(x){return x.t===S.promise;});
-  if(def && def.chk){
-    const ok = !!def.chk(weekDays(S.promiseWeek), S.profile);
-    S.promiseLog.push({week:S.promiseWeek, t:S.promise, d:def.d, achieved:ok, auto:true});
-    save();
-    return {type:"result", ok:ok, t:S.promise};
+  // 1) 週が明けてまだ判定していない約束があれば判定する
+  if(S.promise && S.promiseWeek!==undefined && WEEK_IDX>S.promiseWeek &&
+     !S.promiseLog.some(function(e){return e.week===S.promiseWeek;})){
+    const def = PROMISE_POOL.find(function(x){return x.t===S.promise;});
+    if(def && def.chk){
+      const ok = !!def.chk(weekDays(S.promiseWeek), S.profile);
+      S.promiseLog.push({week:S.promiseWeek, t:S.promise, d:def.d, achieved:ok, auto:true});
+      save();
+    } else {
+      return {type:"ask", t:S.promise, d:def?def.d:2};
+    }
   }
-  return {type:"ask", t:S.promise, d:def?def.d:2};
+  // 2) 直近の判定結果は「OK」を押すか新しい約束を選ぶまで表示し続ける
+  //    (以前は一度描画されると消えてしまい、タブを切り替えると見逃していた)
+  const last = S.promiseLog.length ? S.promiseLog[S.promiseLog.length-1] : null;
+  if(last && WEEK_IDX>last.week && WEEK_IDX-last.week<=2 &&
+     (S.promiseResultAck===undefined || S.promiseResultAck<last.week) &&
+     !(S.promise && S.promiseWeek===WEEK_IDX)){
+    return {type:"result", ok:!!last.achieved, t:last.t, week:last.week};
+  }
+  return null;
 }
 function reportPromise(ok, d){
   S.promiseLog = S.promiseLog||[];
@@ -3932,8 +4231,7 @@ function renderConsent(){
       '<div style="font-size:12px;line-height:1.9;color:var(--sub);border-top:1px dashed var(--line);padding-top:12px;margin-bottom:14px">' +
         '<b>記録の保存について</b><br>' + esc(PRIVACY_TEXT) +
       '</div>' +
-      (SUPERVISOR ? '<div style="font-size:12px;color:var(--sub);margin-bottom:14px">監修：' + esc(SUPERVISOR) + '（コメントはアプリが自動生成する一般的な情報であり、監修者による個別の栄養指導ではありません）</div>'
-                  : '<div style="font-size:12px;color:var(--sub);margin-bottom:14px">本アプリのコメントは、あらかじめ用意された一般的な情報をもとにアプリが自動生成するもので、専門職による個別の栄養指導ではありません。</div>') +
+      '<div style="font-size:12px;color:var(--sub);margin-bottom:14px">本アプリのコメントは、あらかじめ用意された一般的な情報をもとにアプリが自動生成するもので、専門職による個別の栄養指導ではありません。</div>' +
       '<button id="agreeChk" style="display:flex;width:100%;text-align:left;gap:12px;align-items:flex-start;padding:14px;border-radius:12px;border:1.5px solid ' + (consentChecked?"var(--green)":"var(--line)") + ';background:' + (consentChecked?"var(--pale)":"#fff") + ';font-family:inherit">' +
         '<span style="display:inline-block;width:22px;height:22px;border-radius:6px;flex-shrink:0;border:2px solid ' + (consentChecked?"var(--green)":"var(--line)") + ';background:' + (consentChecked?"var(--green)":"#fff") + ';color:#fff;text-align:center;line-height:19px;font-weight:700">' + (consentChecked?"✓":"") + '</span>' +
         '<span style="font-size:13px;line-height:1.7;color:var(--ink)">上記の内容を読み、本アプリが医療や専門職による個別指導の代わりではないことを理解しました。</span>' +
@@ -3964,8 +4262,7 @@ function renderAbout(){
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">コメントについて</div>' +
-      '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の栄養士ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。' +
-      (SUPERVISOR ? '<br>監修：' + esc(SUPERVISOR) : '') + '</div>' +
+      '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の栄養士ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">同意の管理</div>' +
@@ -3984,6 +4281,7 @@ function renderAbout(){
    体重・行動変容段階・目標を再確認し、エネルギー必要量と
    目標皿数を現在の体に合わせて再計算する。完了するまで
    レベルは関門で止まり続ける。 */
+let ckError = "";
 function renderCheckup(){
   const p=S.profile;
   if(!ckForm) ckForm={ weight:String(p.weight), stage:p.stage, goal:p.goal };
@@ -4002,6 +4300,7 @@ function renderCheckup(){
       '</div>' +
       '<label class="label">食生活の見直しについて、今のお気持ちに最も近いものは？</label>' +
       STAGES.map(st=>'<button class="opt' + (ckForm.stage===st.id?" on":"") + '" data-ckstage="' + st.id + '">' + st.q + '</button>').join("") +
+      (ckError ? '<div style="margin-top:12px;background:#FBF1F1;border:1px solid var(--ume);border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.8;color:var(--ume)">' + esc(ckError) + '</div>' : '') +
       '<button class="btn-main" id="ck_go"' + (ready?"":" disabled") + ' style="margin-top:14px">' +
         (ready?"確認を完了して、次の段階へ進む":"体重を入力してください") + '</button>' +
     '</div></div>';
@@ -4012,14 +4311,18 @@ function renderCheckup(){
     ckForm.weight=$("ck_w").value;
     const w=parseFloat(ckForm.weight);
     if(isNaN(w)) return;
+    const err = profileInputError(p.age, p.height, w, ckForm.goal);
+    if(err){ ckError=err; renderCheckup(); return; }
+    ckError="";
     const gate=levelState().gate;
     // プロフィールを現在の体に合わせて更新し、目標を再計算
     p.weight=w;
     p.bmi=w/Math.pow(p.height/100,2);
     p.stage=ckForm.stage;
     p.goal=ckForm.goal;
-    const e0=Math.round(bmr(w,p.height,p.age,p.sexF)*PAL[p.pal]/10)*10;
-    p.energy = p.goal==="loss" ? e0-300 : p.goal==="gain" ? e0+300 : e0;
+    const b0=bmr(w,p.height,p.age,p.sexF);
+    const e0=Math.round(b0*PAL[p.pal]/10)*10;
+    p.energy = targetEnergy(e0, p.goal, b0);
     p.targets = svTargets(p.energy);
     if(gate){ S.checkups=(S.checkups||[]); if(S.checkups.indexOf(gate)<0) S.checkups.push(gate); }
     S.checkupLog=(S.checkupLog||[]);
@@ -4196,8 +4499,13 @@ function renderReport(){
     secHTML("VARIETY","食事の多様性") +
     (function(){
       const v = dvsWeekly();
-      if(v.days < 7){
-        return '<div class="card"><div class="empty">多様性得点は、7日間の食べた頻度がそろってから計算します。<br>あと' + (7-v.days) + '日記録すると、今週の得点が表示されます。</div></div>';
+      if(!v.ready){
+        return '<div class="card"><div class="empty">多様性得点は、使いはじめてから7日たつと計算が始まります。<br>' +
+          (v.startDays>0 ? 'あと' + Math.max(1, 7-v.startDays) + '日で計算開始です。それまでは10種類のチェックだけ続けましょう。' : 'まずは「記録」タブから、今日の食事をつけてみましょう。') +
+          '</div></div>';
+      }
+      if(v.days < 6){
+        return '<div class="card"><div class="empty">この1週間の食事記録は' + v.days + '日分です。<br>多様性得点は、7日のうち6日以上の記録がある週に計算します（1日までのお休みはOK）。</div></div>';
       }
       const cls = v.score>=7 ? "とても豊か" : v.score>=4 ? "まずまず" : "のびしろあり";
       return '<div class="card">' +
@@ -4207,11 +4515,13 @@ function renderReport(){
         '</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:12px 0 4px">' +
           DVS_GROUPS.map(function(g){
-            const ok = v.freq[g.id]>=6;
+            const ok = v.freq[g.id]>=v.need;
             return '<span class="disp" style="width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;font-size:12px;font-weight:700;background:' + (ok?"var(--green)":"#EEE") + ';color:' + (ok?"#fff":"var(--sub)") + '" title="' + g.label + '">' + g.kana + '</span>';
           }).join("") +
         '</div>' +
-        '<div class="hint">「さあにぎやかいただく」の10食品群を、この7日間で<b>ほぼ毎日（6日以上）</b>食べられた数です。7点以上が理想。色のついていない文字が、今週ののびしろです。</div>' +
+        '<div class="hint">「さあにぎやかいただく」の10食品群を、この7日間で<b>ほぼ毎日（' + (v.days>=7 ? '6日以上' : '5日以上') + '）</b>食べられた数です。' +
+          (v.days>=7 ? '' : '今週は1日分の記録がないため、6日分のデータから算出しています。') +
+          '7点以上が理想。色のついていない文字が、今週ののびしろです。</div>' +
       '</div>';
     })() +
     secHTML("HEALTH DEVIATION","健康偏差値") +
@@ -4236,19 +4546,120 @@ function renderReport(){
           }).join("") + '</div>' : "") +
       '</div>';
     })() +
-    secHTML("DATA EXPORT","記録データの書き出し") +
+    secHTML("DATA EXPORT / RESTORE","記録データの書き出し・復元") +
     '<div class="card">' +
       '<div style="font-size:12px;color:var(--sub);line-height:1.8;margin-bottom:12px">これまでの全記録をCSVファイルとして保存できます。ExcelやRでそのまま開ける形式です。CSVはこの端末の中で作られ、外部には送信されません（ご自身で共有した場合は、共有先での管理になります）。記録は端末内のみに保存されるため、<b>月1回のバックアップ</b>をおすすめします。</div>' +
       '<button class="btn-main" id="csvBtn">CSVをダウンロード</button>' +
+      '<div style="border-top:1px dashed var(--line);margin-top:14px;padding-top:12px">' +
+        '<div style="font-size:12px;color:var(--sub);line-height:1.8;margin-bottom:10px">機種変更やブラウザのデータ消去のあとは、書き出しておいたCSVをここから読み込むと記録を復元できます。<b>すでに記録がある日は上書きせず</b>、空いている日だけを復元します（プロフィールと約束の履歴はCSVに含まれないため、初回アセスメントは再入力になります）。</div>' +
+        '<button id="csvImportBtn" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--green);background:#fff;color:var(--green);font-weight:700">CSVから復元する</button>' +
+        '<input type="file" id="csvFile" accept=".csv,text/csv,text/plain" style="display:none">' +
+        (importResult ? '<div style="margin-top:10px;font-size:12px;line-height:1.8;border-radius:10px;padding:10px 12px;' +
+          (importResult.error ? 'background:#FBF1F1;border:1px solid var(--ume);color:var(--ume)' : 'background:var(--pale);border:1px solid var(--green);color:var(--deep)') + '">' +
+          esc(importResult.error ? importResult.error :
+            importResult.imported + "日分を復元しました。" +
+            (importResult.skipped ? "（すでに記録がある" + importResult.skipped + "日分はそのまま残しました）" : "") +
+            (importResult.invalid ? " 読み取れない行が" + importResult.invalid + "行ありました。" : "")) +
+          '</div>' : '') +
+      '</div>' +
     '</div>' +
   '</div>';
   $("csvBtn").addEventListener("click", exportCSV);
+  $("csvImportBtn").addEventListener("click", function(){ $("csvFile").click(); });
+  $("csvFile").addEventListener("change", function(){
+    const f = this.files && this.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = function(){
+      importResult = importDaysFromCSV(reader.result);
+      render();
+    };
+    reader.onerror = function(){
+      importResult = { error:"ファイルを読み込めませんでした。もう一度お試しください。" };
+      render();
+    };
+    reader.readAsText(f, "utf-8");
+  });
 }
 
 /* --- CSV書き出し --- */
 function csvCell(v){
   v = v==null ? "" : String(v);
   return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+}
+/* --- CSV読み込み（復元） ---
+   exportCSVが書き出した形式をそのまま読み戻す。列は見出し名で対応づけるため、
+   列の並びが変わっていても復元できる。すでに記録がある日は上書きしない。 */
+function parseCSVText(text){
+  text = String(text||"").replace(/^﻿/, "");
+  const rows=[]; let row=[], cell="", inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){
+        if(text[i+1]==='"'){ cell+='"'; i++; }
+        else inQ=false;
+      } else cell+=c;
+    } else if(c==='"'){ inQ=true; }
+    else if(c===','){ row.push(cell); cell=""; }
+    else if(c==='\n' || c==='\r'){
+      if(c==='\r' && text[i+1]==='\n') i++;
+      row.push(cell); cell="";
+      if(row.length>1 || row[0]!=="") rows.push(row);
+      row=[];
+    } else cell+=c;
+  }
+  if(cell!=="" || row.length){ row.push(cell); if(row.length>1 || row[0]!=="") rows.push(row); }
+  return rows;
+}
+function parseClockCell(s){
+  s = String(s==null?"":s).trim();
+  if(!s) return null;
+  const next = /翌/.test(s);
+  const m = s.replace(/[()（）翌\s]/g,"").match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  let h = Number(m[1]) + Number(m[2])/60;
+  if(next) h += 24;
+  return roundTime5(h);
+}
+function importDaysFromCSV(text){
+  const rows = parseCSVText(text);
+  if(rows.length < 2) return { error:"CSVの中身が読み取れませんでした。書き出したCSVファイルを選んでください。" };
+  const head = rows[0].map(function(h){ return String(h||"").trim(); });
+  const col = {}; head.forEach(function(h,i){ col[h]=i; });
+  if(col["日付"]===undefined || col["主食_皿"]===undefined){
+    return { error:"このファイルは本アプリのCSV形式ではないようです（「日付」「主食_皿」の列が見つかりません）。" };
+  }
+  const get = function(r,name){ const i=col[name]; return i===undefined ? "" : (r[i]===undefined ? "" : String(r[i]).trim()); };
+  let imported=0, skipped=0, invalid=0;
+  for(let ri=1; ri<rows.length; ri++){
+    const r = rows[ri];
+    const key = get(r,"日付");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(key) || dayIndexFromKey(key)==null){ invalid++; continue; }
+    const existing = S.days[key];
+    if(existing && (anyRecord(existing) || existing.weight!=="")){ skipped++; continue; }  // 既存の記録は守る
+    const day = emptyDay();
+    [["breakfast","朝食","朝食時刻"],["lunch","昼食","昼食時刻"],["dinner","夕食","夕食時刻"]].forEach(function(mk){
+      const wasSkipped = get(r,mk[1])==="欠食";
+      const t = parseClockCell(get(r,mk[2]));
+      day.meals[mk[0]] = { skipped: wasSkipped, time: t==null ? day.meals[mk[0]].time : t };
+    });
+    day.sv["主食"]=num0(get(r,"主食_皿")); day.sv["副菜"]=num0(get(r,"副菜_皿")); day.sv["主菜"]=num0(get(r,"主菜_皿"));
+    day.sv["乳製品"]=num0(get(r,"乳製品_皿")); day.sv["果物"]=num0(get(r,"果物_皿"));
+    day.snacks = num0(get(r,"補食回数"));
+    day.snackKinds = { confection: get(r,"菓子類")==="1", sweetDrink: get(r,"嗜好飲料")==="1" };
+    day.weight = get(r,"体重kg");
+    const bed = parseClockCell(get(r,"就寝時刻"));
+    const wake = parseClockCell(get(r,"起床時刻"));
+    day.sleep = { bed: bed==null ? null : (bed>=24 ? roundTime5(bed-24) : bed),
+                  wake: wake==null ? null : (wake>=24 ? roundTime5(wake-24) : wake),
+                  awak: num0(get(r,"夜間覚醒回数")) };
+    DVS_GROUPS.forEach(function(g){ day.dvs[g.id] = get(r,"DVS_"+g.label)==="1"; });
+    S.days[key] = normalizeDay(day);
+    imported++;
+  }
+  if(imported>0) save();
+  return { imported:imported, skipped:skipped, invalid:invalid };
 }
 function exportCSV(){
   const head = ["日付","朝食","朝食時刻","昼食","昼食時刻","夕食","夕食時刻",
@@ -4278,6 +4689,68 @@ function exportCSV(){
   a.download = "tonari-records.csv";
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(a.href);
+}
+
+/* --- 記録リマインダー ---
+   外部サーバーを使わない方針のため、Web Push(閉じたアプリへの配信)は使わない。
+   その代わりに3段構えで記録漏れを防ぐ:
+   1) アプリが開いている間(前面・背面タブ)は、設定時刻にOSの通知を表示
+   2) ホーム画面に追加したアプリでは、未記録のあいだアイコンにバッジを表示
+   3) 設定時刻を過ぎてアプリを開いたときは、画面内バナーで知らせる */
+function reminderDue(){
+  if(!S.reminder || !S.reminder.on) return false;
+  if(!S.profile || !S.consent) return false;
+  const d = S.days[TODAY];
+  if(d && recorded(d)) return false;      // 今日の食事記録があれば何もしない
+  const parts = String(S.reminder.time||"21:00").split(":");
+  const target = Number(parts[0])*60 + Number(parts[1]||0);
+  const nowD = new Date();
+  return nowD.getHours()*60 + nowD.getMinutes() >= target;
+}
+function updateBadge(){
+  if(!("setAppBadge" in navigator)) return;
+  try{
+    if(reminderDue()) navigator.setAppBadge(1).catch(function(){});
+    else navigator.clearAppBadge().catch(function(){});
+  }catch(e){}
+}
+function showReminderBanner(){
+  if(document.getElementById("reminderToast")) return;
+  if(!S.profile || !S.consent) return;
+  const div = document.createElement("div");
+  div.id = "reminderToast";
+  div.setAttribute("role","status");
+  div.style.cssText = "position:fixed;top:12px;left:12px;right:12px;z-index:60;background:var(--deep);color:#fff;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.7;box-shadow:0 10px 30px rgba(38,52,46,.30);display:flex;gap:10px;align-items:center;max-width:536px;margin:0 auto";
+  div.innerHTML = '<span style="font-size:18px" aria-hidden="true">⏰</span>' +
+    '<div style="flex:1">今日の食事はまだ記録されていません。1分だけ、今日の分をつけませんか？</div>' +
+    '<button id="remGo" style="flex-shrink:0;padding:8px 14px;border-radius:999px;border:none;background:var(--yuzu);color:#3D2E06;font-size:12px;font-weight:700">記録する</button>' +
+    '<button id="remClose" aria-label="閉じる" style="flex-shrink:0;width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,.4);background:none;color:#fff;font-size:14px;line-height:1">×</button>';
+  document.body.appendChild(div);
+  const remove = function(){ if(div.parentNode) div.parentNode.removeChild(div); };
+  document.getElementById("remGo").addEventListener("click", function(){ remove(); checkupMode=false; aboutMode=false; tab="record"; render(); });
+  document.getElementById("remClose").addEventListener("click", remove);
+}
+function fireReminderIfNeeded(){
+  updateBadge();
+  if(!reminderDue()) return;
+  if(S.reminderFiredDate===TODAY){
+    // 通知は1日1回。ただしアプリを開いた瞬間の画面内バナーは毎回出す
+    if(!document.hidden) showReminderBanner();
+    return;
+  }
+  S.reminderFiredDate = TODAY; save();
+  const name = S.profile && S.profile.name ? S.profile.name + "さん、" : "";
+  const body = name + "今日の食事はまだ記録されていません。1分だけ、今日の分をつけませんか？";
+  if(("Notification" in window) && Notification.permission==="granted"){
+    const fallback = function(){ try{ new Notification("となりの栄養士", {body:body, icon:"icon-192.png", tag:"tonari-reminder"}); }catch(e){} };
+    if(navigator.serviceWorker && navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(function(reg){
+        if(reg && reg.showNotification) reg.showNotification("となりの栄養士", {body:body, icon:"icon-192.png", badge:"icon-192.png", tag:"tonari-reminder"});
+        else fallback();
+      }).catch(fallback);
+    } else fallback();
+  }
+  if(!document.hidden) showReminderBanner();
 }
 
 /* --- 全体描画 --- */
@@ -4348,6 +4821,19 @@ function initMascotTail(){
 initMascotTail();
 render();
 save();
+/* 日またぎ対策: ホーム画面アプリ(PWA)は開いたまま日をまたぐことがあるため、
+   アプリに戻ったとき・および定期チェックで日付が変わっていたら再読み込みして
+   「今日」を取り直す（記録が前日の日付に書き込まれるのを防ぐ）。 */
+function reloadIfDateChanged(){
+  if(!document.hidden && dateKey(new Date())!==TODAY) location.reload();
+}
+function minuteTick(){
+  reloadIfDateChanged();
+  fireReminderIfNeeded();
+}
+document.addEventListener("visibilitychange", minuteTick);
+setInterval(minuteTick, 60000);
+fireReminderIfNeeded();
 if("serviceWorker" in navigator && /^https?:$/.test(location.protocol)){
   navigator.serviceWorker.register("sw.js").catch(function(){ /* 非対応環境では何もしない */ });
 }
