@@ -388,6 +388,22 @@ function normalizeState(raw){
 }
 /* 過去7日間(今日を含む)の頻度からDVSを算出
    返り値: {score:0-10, days:記録日数, freq:{群id:日数}, missing:[ほぼ食べていない群]} */
+function firstRecordDayIndex(){
+  let first=null;
+  Object.keys(S.days).forEach(function(k){
+    if(anyRecord(S.days[k])){
+      const di=dayIndexFromKey(k);
+      if(di!=null && (first==null || di<first)) first=di;
+    }
+  });
+  return first;
+}
+/* 過去7日間(今日を含む)の頻度からDVSを算出する。
+   ・利用開始(初回記録日)を1日目として、7日目以降に算出する(ready)
+   ・窓内の食事記録が7日そろえば「6日以上」を頻出とみなす。
+     1日だけ欠損した週(記録6日)は、6日分のデータから「5日以上」で算出する
+   ・欠損が2日以上(記録5日以下)の週は得点を算出しない(computable=false)
+   返り値: {score, days, freq, missing, ready, computable, need, startDays} */
 function dvsWeekly(){
   const freq={}; let days=0;
   DVS_GROUPS.forEach(function(g){freq[g.id]=0;});
@@ -399,9 +415,16 @@ function dvsWeekly(){
       DVS_GROUPS.forEach(function(g){ if(d.dvs && d.dvs[g.id]) freq[g.id]++; });
     }
   }
-  const score = DVS_GROUPS.filter(function(g){return freq[g.id]>=6;}).length;
+  const first = firstRecordDayIndex();
+  const todayIdx = dayIndexFromKey(TODAY);
+  const startDays = (first==null || todayIdx==null) ? 0 : (todayIdx - first + 1); // 利用日数(初回記録日=1日目)
+  const ready = startDays >= 7;
+  const need = days >= 7 ? 6 : 5;   // 1日欠損の週は6日分から「5日以上」で判定
+  const computable = ready && days >= 6;
+  const score = DVS_GROUPS.filter(function(g){return freq[g.id]>=need;}).length;
   const missing = DVS_GROUPS.filter(function(g){return freq[g.id]<=1;});
-  return { score:score, days:days, freq:freq, missing:missing };
+  return { score:score, days:days, freq:freq, missing:missing,
+           ready:ready, computable:computable, need:need, startDays:startDays };
 }
 /* ---------- 利用同意・監修表記 ---------- */
 const CONSENT_VERSION = "1.1";   // 同意文を改訂したら必ず数字を上げる(再同意が求められる)
@@ -685,7 +708,7 @@ const FACTS = [
     benefits:{
       "default":"「さあにぎやかいただく」の合言葉どおりの食卓です。食品の多様性が高い人ほど、筋力や認知機能が保たれやすいことが日本の高齢者研究で示されています。"
     }},
-  { when:(p,d)=> { const v=dvsWeekly(); return v.days>=7 && v.score>=7; },
+  { when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=7; },
     fact:"この1週間、食事の多様性得点が7点以上です。",
     benefits:{
       "default":"10食品群のうち7つ以上を「ほぼ毎日」食べられています。これは栄養学の調査で「低栄養になりにくい食べ方」とされる水準で、続けるほど将来の体力の貯金になります。"
@@ -1438,9 +1461,9 @@ const ADVICE = [
     body:()=> "この1週間、果物の頻度が少なめです。果物は“買ったら見える場所に置く”だけで摂取頻度が上がりやすい食品です。みかん、バナナ、キウイ、冷凍フルーツのように手間の少ないものから始めましょう。"},
   { pri:3.85, title:"DVS: 油脂の使い方", when:(p,d)=> weeklyDvsMiss("abura",1) && mealRecorded(d) && d.sv["副菜"]>=p.targets["副菜"]*0.6,
     body:()=> "この1週間、油脂の食品群が少なめです。たくさん使う必要はありませんが、野菜に少量のオリーブ油やごま油を合わせると、脂溶性ビタミンを取り入れやすくなります。揚げ物ではなく“小さじ1の質”で考えましょう。"},
-  { pri:4.2, title:"DVSはもう一歩です", when:(p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; },
+  { pri:4.2, title:"DVSはもう一歩です", when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; },
     body:()=> { const v=dvsWeekly(); const names=v.missing.slice(0,2).map(function(g){return g.label;}).join("、"); return "この1週間の食事の多様性得点は" + v.score + "点です。悪くありませんが、あと一段上げるなら「" + names + "」のどちらかを週に2〜3回へ増やすのが近道です。"; } },
-  { pri:4.3, title:"DVSは高めです", when:(p,d)=> { const v=dvsWeekly(); return v.days>=7 && v.score>=8 && mealRecorded(d) && dayScore(d,p.targets)<70; },
+  { pri:4.3, title:"DVSは高めです", when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=8 && mealRecorded(d) && dayScore(d,p.targets)<70; },
     body:()=> "食品の種類はかなり広く取れています。一方で今日の皿数バランスは少し崩れています。多様性が高い人は土台が強いので、次は主食・主菜・副菜の量を整えるだけで、かなり完成度が上がります。"},
   { pri:4.6, title:"睡眠不足と食欲", when:(p,d)=> sleepRecorded(d) && sleepDur(d.sleep)<6 && mealRecorded(d),
     body:()=> "睡眠が6時間未満の日は、甘いものや脂っこいものを欲しやすくなることがあります。今日の食欲が強かったとしても、意志の問題だけではありません。今夜は15分早く布団に入ることを、食事改善の一部として扱いましょう。"},
@@ -1448,7 +1471,7 @@ const ADVICE = [
     body:()=> "夜中の目覚めがあり、夕食も遅めです。寝る直前まで胃が動いていると、眠りが浅くなることがあります。帰宅が遅い日は、夕方に主食を少し先取りし、帰宅後は汁物と主菜中心にする分食が合いやすいです。"},
   { pri:4.8, title:"記録の精度を上げる一歩", key:"補食の記録", when:(p,d)=> snackOnly(d),
     body:()=> "補食や控えたい間食だけでも記録できているのは大事です。次は、前後どちらかの食事を1回だけ入れると、補食が“栄養を補うもの”なのか、“空腹や疲れで増えているもの”なのかが見えやすくなります。"},
-  { pri:1.5, title:"食品の種類を少しだけ広げてみましょう", when:(p,d)=> { const v=dvsWeekly(); const used=DVS_GROUPS.some(function(g){return v.freq[g.id]>0;}); return v.days>=7 && used && v.score<=3; },
+  { pri:1.5, title:"食品の種類を少しだけ広げてみましょう", when:(p,d)=> { const v=dvsWeekly(); const used=DVS_GROUPS.some(function(g){return v.freq[g.id]>0;}); return v.computable && used && v.score<=3; },
     body:(p)=> { const v=dvsWeekly(); const names=v.missing.slice(0,3).map(function(g){return g.label;}).join("、");
       return "この1週間の食事の多様性得点は" + v.score + "点（10点満点）でした。特に「" + names + "」をほとんど食べていません。完璧を目指さず、このうち1つを今週どこかの食事に混ぜるところから始めましょう。"; } },
 ];
@@ -1972,7 +1995,7 @@ const NEXT = [
     "明日は果物を買うなら、切らずに食べられるものを。例：みかん、バナナ、キウイ、ぶどう。手間が少ないほど続きます。",
     "明日は夕食後の定位置に果物を置きましょう。菓子類を我慢するより、先に選びやすいものを置く作戦です。",
     "明日は冷凍フルーツをヨーグルトにのせましょう。果物と乳製品を同時に満たせます。"]},
-  { pri:4.3, when:(p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; }, v:[
+  { pri:4.3, when:(p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; }, v:[
     "明日はDVSの空欄を1つだけ埋めましょう。例：海藻ならのり、卵ならゆで卵、乳製品ならヨーグルト。1群だけで十分です。",
     "明日は記録画面の10食品群を見てから買い物へ。空欄の食品を1つだけカゴに入れると、多様性を上げやすくなります。",
     "明日は“いつもの食事に1つ足す”でいきましょう。ごはんにのり、味噌汁にわかめ、昼にヨーグルト。料理を増やさない作戦です。"]},
@@ -2249,7 +2272,7 @@ addNextVariants(5.12, (p,d)=> sleepRecorded(d) && (d.sleep.awak||0)>=2, [
   "明日は夕方の補食で空腹を整え、寝る前の食事を減らしましょう。",
   "今夜は寝室に食べ物を持ち込まない形を試しましょう。"
 ]);
-addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score<=3; }, [
+addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score<=3; }, [
   "明日はDVSの空欄を1つだけ埋めましょう。のり、卵、ヨーグルトのどれかです。",
   "明日は10食品群を見て、食べていない群を一つ買い物カゴに入れましょう。",
   "明日は味噌汁にわかめと卵を入れて、2群を一度に拾いましょう。",
@@ -2259,7 +2282,7 @@ addNextVariants(5.22, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && 
   "明日は外食でも小鉢つき定食を選び、食品群を広げましょう。",
   "明日は全部埋めず、一番簡単な空欄だけを埋めましょう。"
 ]);
-addNextVariants(5.32, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6; }, [
+addNextVariants(5.32, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6; }, [
   "明日はDVSをあと1点上げる日です。足りない群を一つだけ固定しましょう。",
   "明日は海藻ならのり、卵ならゆで卵、乳製品ならヨーグルトで足しましょう。",
   "明日は同じ料理に具を一つ足しましょう。味噌汁にわかめか卵です。",
@@ -2383,13 +2406,13 @@ addNextVariants(4.88, (p,d)=> p.goal==="gain" && d.sv["主菜"]<=1, [
   "明日は朝食に主食と乳製品をそろえ、昼か夜に卵を1つ足しましょう。",
   "明日は食べる量が増やせない時ほど、主菜と乳製品を小さく分けて足しましょう。"
 ]);
-addNextVariants(5.18, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score<=3 && mealRecorded(d); }, [
+addNextVariants(5.18, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score<=3 && mealRecorded(d); }, [
   "明日はDVSを一気に上げようとせず、のり、卵、ヨーグルトの中から一つだけ足しましょう。",
   "明日は味噌汁に、わかめ、豆腐、卵のどれか一つを入れて食品群を増やしましょう。",
   "明日は買い物前に10食品群を見て、空欄の中で一番簡単なものだけ買いましょう。",
   "明日は多様性を量でなく種類で増やします。小さく足すだけで十分です。"
 ]);
-addNextVariants(5.36, (p,d)=> { const v=dvsWeekly(); return dvsWeekTracked() && v.score>=4 && v.score<=6 && dayScore(d,p.targets)<70; }, [
+addNextVariants(5.36, (p,d)=> { const v=dvsWeekly(); return v.computable && v.score>=4 && v.score<=6 && dayScore(d,p.targets)<70; }, [
   "明日は食品群は少し広がっているので、皿数の形を整えましょう。主食、主菜、副菜を1回そろえます。",
   "明日はDVSの空欄を一つ埋めながら、副菜も半皿足しましょう。めかぶや具だくさん汁が使えます。",
   "明日は種類を増やすだけでなく、1食の形を作る日です。おにぎり、卵、具だくさん味噌汁が候補です。",
@@ -4435,8 +4458,13 @@ function renderReport(){
     secHTML("VARIETY","食事の多様性") +
     (function(){
       const v = dvsWeekly();
-      if(v.days < 7){
-        return '<div class="card"><div class="empty">多様性得点は、7日間の食べた頻度がそろってから計算します。<br>あと' + (7-v.days) + '日記録すると、今週の得点が表示されます。</div></div>';
+      if(!v.ready){
+        return '<div class="card"><div class="empty">多様性得点は、使いはじめてから7日たつと計算が始まります。<br>' +
+          (v.startDays>0 ? 'あと' + Math.max(1, 7-v.startDays) + '日で計算開始です。それまでは10種類のチェックだけ続けましょう。' : 'まずは「記録」タブから、今日の食事をつけてみましょう。') +
+          '</div></div>';
+      }
+      if(v.days < 6){
+        return '<div class="card"><div class="empty">この1週間の食事記録は' + v.days + '日分です。<br>多様性得点は、7日のうち6日以上の記録がある週に計算します（1日までのお休みはOK）。</div></div>';
       }
       const cls = v.score>=7 ? "とても豊か" : v.score>=4 ? "まずまず" : "のびしろあり";
       return '<div class="card">' +
@@ -4446,11 +4474,13 @@ function renderReport(){
         '</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:12px 0 4px">' +
           DVS_GROUPS.map(function(g){
-            const ok = v.freq[g.id]>=6;
+            const ok = v.freq[g.id]>=v.need;
             return '<span class="disp" style="width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;font-size:12px;font-weight:700;background:' + (ok?"var(--green)":"#EEE") + ';color:' + (ok?"#fff":"var(--sub)") + '" title="' + g.label + '">' + g.kana + '</span>';
           }).join("") +
         '</div>' +
-        '<div class="hint">「さあにぎやかいただく」の10食品群を、この7日間で<b>ほぼ毎日（6日以上）</b>食べられた数です。7点以上が理想。色のついていない文字が、今週ののびしろです。</div>' +
+        '<div class="hint">「さあにぎやかいただく」の10食品群を、この7日間で<b>ほぼ毎日（' + (v.days>=7 ? '6日以上' : '5日以上') + '）</b>食べられた数です。' +
+          (v.days>=7 ? '' : '今週は1日分の記録がないため、6日分のデータから算出しています。') +
+          '7点以上が理想。色のついていない文字が、今週ののびしろです。</div>' +
       '</div>';
     })() +
     secHTML("HEALTH DEVIATION","健康偏差値") +
