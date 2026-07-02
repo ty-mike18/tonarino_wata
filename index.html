@@ -384,6 +384,9 @@ function normalizeState(raw){
   if(!Array.isArray(s.praiseHistory)) s.praiseHistory = [];
   if(s.promise===undefined) s.promise = null;
   if(s.profile===undefined) s.profile = null;
+  if(!s.reminder || typeof s.reminder!=="object" || !/^\d{1,2}:\d{2}$/.test(String(s.reminder.time||""))){
+    s.reminder = { on: !!(s.reminder && s.reminder.on), time:"21:00" };
+  }
   return s;
 }
 /* 過去7日間(今日を含む)の頻度からDVSを算出
@@ -2708,7 +2711,7 @@ function totalRecordedDays(){
    ・減点（Lv30以降）: レベル30以上のあいだは、未記録の日や
      不摂生な日（低スコア・朝食欠食・遅い夕食・副菜不足・DVS低値・
      控えたい間食・睡眠不足）に、XPが比例減衰する。ペナルティ率は
-     急落しすぎないよう従来より緩め、降格時は肩書を「無職」とする。
+     急落しすぎないよう従来より緩め、降格時は肩書を「研究生」とする。
      ペナルティが高い日は獲得XPも25〜75%に抑え、記録だけの上昇を防ぐ。
      「最初は上がりやすく、上に行くほど健康的な生活の継続が必要で、
       続かなければ偏差値も肩書も落ちる。ただしLv30までは既得の足場」設計。
@@ -2785,7 +2788,7 @@ function penaltyMult(L){
 }
 function applyXPPenalty(xp, pen, lvlNow){
   if(lvlNow<30 || pen<=0) return xp;
-  var floor = cumXP(29); // 助教から落ちた場合は「無職」表示に入れる
+  var floor = cumXP(29); // 助教から落ちた場合は「研究生」表示に入れる
   var excess = xp - floor;
   if(excess<=0) return xp;
   var fixed = pen>=8 ? 4 : (pen>=6 ? 3 : (pen>=3 ? 2 : 1));
@@ -2943,7 +2946,7 @@ function hasHeldAssistant(){
   return (S.maxLevelEver||0)>=30 || (S.lastLevel||0)>=30 || (S.checkups||[]).indexOf(30)>=0;
 }
 function displayLevelTitle(L){
-  return (L<30 && hasHeldAssistant()) ? "無職" : levelTitle(L);
+  return (L<30 && hasHeldAssistant()) ? "研究生" : levelTitle(L);
 }
 function dayIndexFromKey(k){
   const p = String(k||"").split("-").map(Number);
@@ -3694,7 +3697,7 @@ function renderHome(){
   if(S.lastLevel===undefined){ S.lastLevel=LV.level; save(); }
   const prevLevel = S.lastLevel;
   const heldBefore = hasHeldAssistant();
-  const titleForLevel = function(L){ return (L<30 && heldBefore) ? "無職" : levelTitle(L); };
+  const titleForLevel = function(L){ return (L<30 && heldBefore) ? "研究生" : levelTitle(L); };
   const leveledUp = LV.level > S.lastLevel;
   const leveledDown = LV.level < S.lastLevel && !LV.gate;
   if((S.maxLevelEver||0) < LV.level){ S.maxLevelEver = LV.level; save(); }
@@ -3742,7 +3745,7 @@ function renderHome(){
         return '<div class="card fadein" style="border:1.5px solid var(--line);background:#FBFBF9;display:flex;align-items:center;gap:14px">' +
           '<div style="font-size:30px">🍃</div>' +
           '<div><div class="disp" style="font-size:14px;font-weight:700;color:var(--ink)">' +
-            (demoted ? '肩書が「' + titleNow + '」' + (titleNow==="無職" ? 'になりました' : 'に戻りました') : '健康偏差値が ' + LV.level + ' に下がりました') +
+            (demoted ? '肩書が「' + titleNow + '」' + (titleNow==="研究生" ? 'になりました' : 'に戻りました') : '健康偏差値が ' + LV.level + ' に下がりました') +
           '</div>' +
           '<div style="font-size:12px;line-height:1.8;color:var(--sub)">ある肩書以降では、生活が乱れた日や記録のない日が続くと偏差値が下がる仕組みです。責めるためではなく、立て直しの合図です。今日の記録から、また積み直していきましょう。</div></div></div>';
       })() : "") +
@@ -3925,6 +3928,30 @@ function renderRecord(){
       '</div>' +
       '<input class="input" id="w_in" type="number" step="0.1" placeholder="kg（起床後・排尿後が理想）" value="' + esc(d.weight) + '">' +
     '</div>' +
+    '<div class="card">' +
+      '<div class="section-head">' +
+        '<div style="font-size:26px" aria-hidden="true">⏰</div>' +
+        '<div class="disp" style="font-size:14px;font-weight:700">記録リマインダー</div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--sub);line-height:1.8;margin-bottom:10px">設定した時刻までに今日の食事記録がないときに、お知らせします。</div>' +
+      '<div style="display:flex;gap:10px;align-items:center">' +
+        '<button id="remToggle" class="chip' + (S.reminder.on?" on":"") + '" aria-pressed="' + (S.reminder.on?"true":"false") + '">' + (S.reminder.on?"✓ オン":"オフ") + '</button>' +
+        '<input class="input" type="time" id="remTime" value="' + esc(S.reminder.time) + '" step="300"' + (S.reminder.on?"":" disabled") + ' style="width:auto;flex:0 0 auto" aria-label="リマインダーの時刻">' +
+      '</div>' +
+      (function(){
+        if(!S.reminder.on) return '';
+        const noApi = !("Notification" in window);
+        const perm = noApi ? null : Notification.permission;
+        let line = "";
+        if(noApi) line = "この環境では通知に対応していないため、アプリを開いたときの画面内バナーとアイコンのバッジでお知らせします。";
+        else if(perm==="granted") line = "通知は許可されています。アプリを開いている間は設定時刻にお知らせが表示されます。";
+        else if(perm==="denied") line = "通知がブラウザ側でブロックされています。端末の設定から本アプリの通知を許可すると、ポップアップでお知らせできます（画面内バナーとバッジは動作します）。";
+        else line = "ポップアップ通知を使うには、下のボタンから通知を許可してください。";
+        return '<div style="font-size:11px;color:var(--sub);line-height:1.8;margin-top:10px">' + line + '</div>' +
+          (perm==="default" ? '<button id="remPerm" style="margin-top:8px;width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--green);background:#fff;color:var(--green);font-weight:700;font-size:12px">通知を許可する</button>' : '');
+      })() +
+      '<div class="hint">※ブラウザの仕組み上、アプリを完全に閉じている間はポップアップを表示できません。ホーム画面に追加したアプリでは、未記録のあいだアイコンにバッジ（印）が付き、開いたときには画面内バナーでお知らせします。</div>' +
+    '</div>' +
   '</div>';
 
   if(!d.sleep) d.sleep={bed:null,wake:null,awak:0};
@@ -3970,6 +3997,20 @@ function renderRecord(){
     save(); renderRecord();
   }));
   $("w_in").addEventListener("change",()=>{ d.weight=$("w_in").value; save(); });
+  $("remToggle").addEventListener("click",()=>{
+    S.reminder.on = !S.reminder.on;
+    save(); updateBadge();
+    // オンにした瞬間に、まだ聞いていなければ通知許可を求める(ユーザー操作起点)
+    if(S.reminder.on && ("Notification" in window) && Notification.permission==="default"){
+      Notification.requestPermission().finally(()=>renderRecord());
+    } else renderRecord();
+  });
+  $("remTime").addEventListener("change",()=>{
+    const v=$("remTime").value;
+    if(/^\d{1,2}:\d{2}$/.test(v)){ S.reminder.time=v; save(); updateBadge(); }
+  });
+  const rp=$("remPerm");
+  if(rp) rp.addEventListener("click",()=>{ Notification.requestPermission().finally(()=>renderRecord()); });
 }
 
 /* --- 計画 --- */
@@ -4650,6 +4691,68 @@ function exportCSV(){
   URL.revokeObjectURL(a.href);
 }
 
+/* --- 記録リマインダー ---
+   外部サーバーを使わない方針のため、Web Push(閉じたアプリへの配信)は使わない。
+   その代わりに3段構えで記録漏れを防ぐ:
+   1) アプリが開いている間(前面・背面タブ)は、設定時刻にOSの通知を表示
+   2) ホーム画面に追加したアプリでは、未記録のあいだアイコンにバッジを表示
+   3) 設定時刻を過ぎてアプリを開いたときは、画面内バナーで知らせる */
+function reminderDue(){
+  if(!S.reminder || !S.reminder.on) return false;
+  if(!S.profile || !S.consent) return false;
+  const d = S.days[TODAY];
+  if(d && recorded(d)) return false;      // 今日の食事記録があれば何もしない
+  const parts = String(S.reminder.time||"21:00").split(":");
+  const target = Number(parts[0])*60 + Number(parts[1]||0);
+  const nowD = new Date();
+  return nowD.getHours()*60 + nowD.getMinutes() >= target;
+}
+function updateBadge(){
+  if(!("setAppBadge" in navigator)) return;
+  try{
+    if(reminderDue()) navigator.setAppBadge(1).catch(function(){});
+    else navigator.clearAppBadge().catch(function(){});
+  }catch(e){}
+}
+function showReminderBanner(){
+  if(document.getElementById("reminderToast")) return;
+  if(!S.profile || !S.consent) return;
+  const div = document.createElement("div");
+  div.id = "reminderToast";
+  div.setAttribute("role","status");
+  div.style.cssText = "position:fixed;top:12px;left:12px;right:12px;z-index:60;background:var(--deep);color:#fff;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.7;box-shadow:0 10px 30px rgba(38,52,46,.30);display:flex;gap:10px;align-items:center;max-width:536px;margin:0 auto";
+  div.innerHTML = '<span style="font-size:18px" aria-hidden="true">⏰</span>' +
+    '<div style="flex:1">今日の食事はまだ記録されていません。1分だけ、今日の分をつけませんか？</div>' +
+    '<button id="remGo" style="flex-shrink:0;padding:8px 14px;border-radius:999px;border:none;background:var(--yuzu);color:#3D2E06;font-size:12px;font-weight:700">記録する</button>' +
+    '<button id="remClose" aria-label="閉じる" style="flex-shrink:0;width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,.4);background:none;color:#fff;font-size:14px;line-height:1">×</button>';
+  document.body.appendChild(div);
+  const remove = function(){ if(div.parentNode) div.parentNode.removeChild(div); };
+  document.getElementById("remGo").addEventListener("click", function(){ remove(); checkupMode=false; aboutMode=false; tab="record"; render(); });
+  document.getElementById("remClose").addEventListener("click", remove);
+}
+function fireReminderIfNeeded(){
+  updateBadge();
+  if(!reminderDue()) return;
+  if(S.reminderFiredDate===TODAY){
+    // 通知は1日1回。ただしアプリを開いた瞬間の画面内バナーは毎回出す
+    if(!document.hidden) showReminderBanner();
+    return;
+  }
+  S.reminderFiredDate = TODAY; save();
+  const name = S.profile && S.profile.name ? S.profile.name + "さん、" : "";
+  const body = name + "今日の食事はまだ記録されていません。1分だけ、今日の分をつけませんか？";
+  if(("Notification" in window) && Notification.permission==="granted"){
+    const fallback = function(){ try{ new Notification("となりの栄養士", {body:body, icon:"icon-192.png", tag:"tonari-reminder"}); }catch(e){} };
+    if(navigator.serviceWorker && navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(function(reg){
+        if(reg && reg.showNotification) reg.showNotification("となりの栄養士", {body:body, icon:"icon-192.png", badge:"icon-192.png", tag:"tonari-reminder"});
+        else fallback();
+      }).catch(fallback);
+    } else fallback();
+  }
+  if(!document.hidden) showReminderBanner();
+}
+
 /* --- 全体描画 --- */
 function render(){
   const nav=$("nav"), banner=$("banner");
@@ -4724,8 +4827,13 @@ save();
 function reloadIfDateChanged(){
   if(!document.hidden && dateKey(new Date())!==TODAY) location.reload();
 }
-document.addEventListener("visibilitychange", reloadIfDateChanged);
-setInterval(reloadIfDateChanged, 60000);
+function minuteTick(){
+  reloadIfDateChanged();
+  fireReminderIfNeeded();
+}
+document.addEventListener("visibilitychange", minuteTick);
+setInterval(minuteTick, 60000);
+fireReminderIfNeeded();
 if("serviceWorker" in navigator && /^https?:$/.test(location.protocol)){
   navigator.serviceWorker.register("sw.js").catch(function(){ /* 非対応環境では何もしない */ });
 }

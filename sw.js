@@ -1,7 +1,17 @@
-const CACHE_NAME = 'tonari-v20260702-final-v3-23-flat';
+const CACHE_NAME = 'tonari-v20260702-final-v3-24-flat';
 const ASSETS = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png', './sakana.png', './abura.png', './niku.png', './gyunyu.png', './yasai.png', './kaiso.png', './imo.png', './tamago.png', './daizu.png', './kudamono.png', './confection.png', './sweet_drink.png', './weight_scale.png', './bedtime.png', './wake_time.png', './weight_paw.png', './wata-body.png', './wata-tail.png'];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))).then(() => self.clients.claim())); });
+self.addEventListener('notificationclick', event => {
+  // リマインダー通知をタップしたらアプリを前面に(なければ開く)
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      if (clients.openWindow) return clients.openWindow('./index.html');
+    })
+  );
+});
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const req = event.request;
