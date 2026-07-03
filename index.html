@@ -3792,6 +3792,22 @@ function weightHistory(){
   });
   return out.slice(-14);
 }
+/* 月曜はじまりの1週間分の体重系列を返す。
+   offsetWeeks=0で今週、1で先週。未計測日は w:null。 */
+function weekWeightSeries(offsetWeeks){
+  const parts = TODAY.split("-").map(Number);
+  const idx = dayIndexFromKey(TODAY);
+  const back = ((idx + 3) % 7) + offsetWeeks * 7;   // 月曜からの経過日数(+週オフセット)
+  const out = [];
+  for(let i=0;i<7;i++){
+    const dt = new Date(parts[0], parts[1]-1, parts[2] - back + i);
+    const k = dateKey(dt);
+    const d = S.days[k];
+    const w = d ? parseFloat(d.weight) : NaN;
+    out.push({ key:k, dow:i, w: isNaN(w) ? null : w, isToday: k===TODAY });
+  }
+  return out;
+}
 
 /* --- オンボーディング --- */
 let form = { name:"", age:"", sexF:false, height:"", weight:"", pal:"mid", goal:null, stage:null };
@@ -4572,54 +4588,66 @@ function weightComment(p){
   return head + goalLine + trendLine;
 }
 
-function weightTrendChartHTML(hist, p){
-  const W=340,H=196,left=46,right=58,top=22,bottom=36;
+function weightWeeklyChartHTML(cur, prev){
+  /* 月曜はじまりの7日枠に、今週(実線+肉球)と先週(薄いグレーの点線)を重ねて描く。
+     データが何日分たまっても、表示は常にこの2週分だけ。 */
+  const W=340,H=200,left=46,right=16,top=26,bottom=40;
   const plotW=W-left-right, plotH=H-top-bottom, base=top+plotH;
-  const dayMs = 86400000;
-  const toDate = function(key){ return new Date(key + "T00:00:00"); };
-  const toT = function(key){ return toDate(key).getTime(); };
-  const values = hist.map(function(h){return h.w;});
-  let minW = Math.min.apply(null, values);
-  let maxW = Math.max.apply(null, values);
-  const pad = Math.max(0.4, (maxW-minW)*0.18);
-  minW = Math.floor((minW-pad)*2)/2;
-  maxW = Math.ceil((maxW+pad)*2)/2;
-  if(maxW-minW < 1){
-    const mid = (maxW+minW)/2;
-    minW = mid - 0.5;
-    maxW = mid + 0.5;
-  }
-  const t0 = hist.length===1 ? toT(hist[0].key)-dayMs : toT(hist[0].key);
-  const t1 = hist.length===1 ? toT(hist[0].key)+dayMs : toT(hist[hist.length-1].key);
-  const xForT = function(t){ return left + (t-t0) * plotW / Math.max(dayMs, (t1-t0)); };
-  const yForW = function(w){ return base - (w-minW) * plotH / (maxW-minW); };
-  const fmtW = function(w){ return Number(w).toFixed(1).replace(/\.0$/,""); };
-  const yTicks = [minW, (minW+maxW)/2, maxW];
-  const grid = yTicks.map(function(t){
-    const y = yForW(t);
-    return '<line x1="' + left + '" x2="' + (left+plotW) + '" y1="' + y + '" y2="' + y + '" stroke="#E6EEE9" stroke-width="1"/>' +
-      '<text x="' + (left-7) + '" y="' + (y+3.5) + '" text-anchor="end" font-size="8.5" fill="var(--sub)">' + fmtW(t) + '</text>';
+  const WDAY=["月","火","水","木","金","土","日"];
+  const vals=[];
+  cur.forEach(function(x){ if(x.w!=null) vals.push(x.w); });
+  prev.forEach(function(x){ if(x.w!=null) vals.push(x.w); });
+  let minW=Math.min.apply(null,vals), maxW=Math.max.apply(null,vals);
+  const pad=Math.max(0.4,(maxW-minW)*0.18);
+  minW=Math.floor((minW-pad)*2)/2; maxW=Math.ceil((maxW+pad)*2)/2;
+  if(maxW-minW<1){ const mid=(maxW+minW)/2; minW=mid-0.5; maxW=mid+0.5; }
+  const xFor=function(i){ return left + plotW*(i+0.5)/7; };
+  const yFor=function(w){ return base - (w-minW)*plotH/(maxW-minW); };
+  const fmtW=function(w){ return Number(w).toFixed(1).replace(/\.0$/,""); };
+  const yTicks=[minW,(minW+maxW)/2,maxW];
+  const grid=yTicks.map(function(t){
+    const y=yFor(t);
+    return '<line x1="'+left+'" x2="'+(left+plotW)+'" y1="'+y+'" y2="'+y+'" stroke="#E6EEE9" stroke-width="1"/>'+
+      '<text x="'+(left-7)+'" y="'+(y+3.5)+'" text-anchor="end" font-size="8.5" fill="var(--sub)">'+fmtW(t)+'</text>';
   }).join("");
-  const pts = hist.map(function(h){ return xForT(toT(h.key)) + "," + yForW(h.w); }).join(" ");
-  const labelEvery = hist.length>8 ? 2 : 1;
-  const pointEls = hist.map(function(h,i){
-    const x=xForT(toT(h.key)), y=yForW(h.w);
-    const paw=18;
-    const dateLabel = (i%labelEvery===0 || i===hist.length-1) ? '<text x="' + x + '" y="' + (base+20) + '" font-size="7.5" text-anchor="middle" fill="var(--sub)">' + h.label + '</text>' : "";
-    return '<image href="weight_paw.png" x="' + (x-paw/2) + '" y="' + (y-paw/2) + '" width="' + paw + '" height="' + paw + '" preserveAspectRatio="xMidYMid meet"/>' +
-      '<text x="' + x + '" y="' + Math.max(top+8, y-7) + '" font-size="8.5" text-anchor="middle" fill="var(--deep)" font-weight="700">' + fmtW(h.w) + '</text>' +
-      dateLabel;
+  const line=function(series, stroke, dash, width){
+    const pts=series.filter(function(x){return x.w!=null;})
+      .map(function(x){return xFor(x.dow)+","+yFor(x.w);}).join(" ");
+    if(!pts) return "";
+    return '<polyline points="'+pts+'" fill="none" stroke="'+stroke+'" stroke-width="'+width+'"'+
+      (dash?' stroke-dasharray="'+dash+'"':'')+' stroke-linecap="round" stroke-linejoin="round"/>';
+  };
+  // 先週: 薄いグレーの点線 + 小さな点
+  const prevDots=prev.filter(function(x){return x.w!=null;}).map(function(x){
+    return '<circle cx="'+xFor(x.dow)+'" cy="'+yFor(x.w)+'" r="2.6" fill="#C9CFCB"/>';
   }).join("");
-  return '<svg class="weight-trend-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="体重の推移">' +
-    grid +
-    '<line x1="' + left + '" x2="' + left + '" y1="' + top + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
-    '<line x1="' + left + '" x2="' + (left+plotW) + '" y1="' + base + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
-    '<text x="' + (left-24) + '" y="' + (top-8) + '" font-size="8" font-weight="700" fill="var(--sub)">kg</text>' +
-    '<text x="' + (left+plotW+8) + '" y="' + (base+20) + '" font-size="8" font-weight="700" fill="var(--sub)">日</text>' +
-    '<polyline points="' + pts + '" fill="none" stroke="#CDD7D1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
-    pointEls +
-  '</svg>' +
-  '<div class="hint">肉球の位置が、その日の体重です。体重は日々ゆれるため、1点だけで判断せず、ライトグレーの線の流れをゆっくり見ます。</div>';
+  // 今週: 実線 + 肉球マーカー + 値ラベル
+  const curEls=cur.filter(function(x){return x.w!=null;}).map(function(x){
+    const cx=xFor(x.dow), cy=yFor(x.w), paw=18;
+    return '<image href="weight_paw.png" x="'+(cx-paw/2)+'" y="'+(cy-paw/2)+'" width="'+paw+'" height="'+paw+'" preserveAspectRatio="xMidYMid meet"/>'+
+      '<text x="'+cx+'" y="'+Math.max(top+8,cy-8)+'" font-size="8.5" text-anchor="middle" fill="var(--deep)" font-weight="700">'+fmtW(x.w)+'</text>';
+  }).join("");
+  const dayLabels=WDAY.map(function(wd,i){
+    const today=cur[i] && cur[i].isToday;
+    return '<text x="'+xFor(i)+'" y="'+(base+16)+'" text-anchor="middle" font-size="9"'+
+      ' font-weight="'+(today?'900':'500')+'" fill="'+(today?'var(--green)':'var(--sub)')+'">'+wd+(today?'●':'')+'</text>';
+  }).join("");
+  const legendY=top-12;
+  const legend='<line x1="'+(left+plotW-104)+'" x2="'+(left+plotW-86)+'" y1="'+legendY+'" y2="'+legendY+'" stroke="var(--green)" stroke-width="2.2"/>'+
+    '<text x="'+(left+plotW-82)+'" y="'+(legendY+3)+'" font-size="8.5" fill="var(--sub)">今週</text>'+
+    '<line x1="'+(left+plotW-56)+'" x2="'+(left+plotW-38)+'" y1="'+legendY+'" y2="'+legendY+'" stroke="#C9CFCB" stroke-width="1.8" stroke-dasharray="4 4"/>'+
+    '<text x="'+(left+plotW-34)+'" y="'+(legendY+3)+'" font-size="8.5" fill="var(--sub)">先週</text>';
+  return '<svg class="weight-trend-svg" viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="今週と先週の体重">'+
+    grid+
+    '<line x1="'+left+'" x2="'+left+'" y1="'+top+'" y2="'+base+'" stroke="var(--line)" stroke-width="1.2"/>'+
+    '<line x1="'+left+'" x2="'+(left+plotW)+'" y1="'+base+'" y2="'+base+'" stroke="var(--line)" stroke-width="1.2"/>'+
+    '<text x="'+(left-24)+'" y="'+(top-8)+'" font-size="8" font-weight="700" fill="var(--sub)">kg</text>'+
+    legend+
+    line(prev,"#C9CFCB","4 4",1.8)+prevDots+
+    line(cur,"var(--green)","",2.2)+curEls+
+    dayLabels+
+  '</svg>'+
+  '<div class="hint">月曜はじまりの1週間です。肉球と実線が今週、薄いグレーの点線が先週。●は今日。同じ曜日どうしを見比べると、先週からの変化がひと目で分かります。</div>';
 }
 
 function weeklyTrendHTML(){
@@ -4673,12 +4701,13 @@ function weeklyTrendHTML(){
 
 /* --- 経過（体重） --- */
 function renderReport(){
-  const hist = weightHistory();
+  const curWeek = weekWeightSeries(0), prevWeek = weekWeightSeries(1);
+  const hasWeekData = curWeek.some(x=>x.w!=null) || prevWeek.some(x=>x.w!=null);
   let chart;
-  if(hist.length===0){
-    chart = '<div class="empty">まだ体重の記録がありません。<br>「記録」タブの一番下から、今日の体重を入力できます。</div>';
+  if(!hasWeekData){
+    chart = '<div class="empty">この2週間の体重記録がまだありません。<br>「記録」タブの一番下から、今日の体重を入力できます。</div>';
   } else {
-    chart = weightTrendChartHTML(hist, S.profile) +
+    chart = weightWeeklyChartHTML(curWeek, prevWeek) +
     '<div class="hint">' + weightComment(S.profile) + '</div>';
   }
   view.innerHTML = '<div class="fadein">' +
