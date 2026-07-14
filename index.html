@@ -401,6 +401,8 @@ function normalizeState(raw){
   if(!Array.isArray(s.adviceHistory)) s.adviceHistory = [];
   if(!Array.isArray(s.praiseHistory)) s.praiseHistory = [];
   if(!Array.isArray(s.reviewHistory)) s.reviewHistory = [];
+  if(!Array.isArray(s.svQuizHistory)) s.svQuizHistory = [];
+  if(!s.svQuizStats || typeof s.svQuizStats!=="object") s.svQuizStats = { asked:0, correct:0 };
   if(!Array.isArray(s.recipeHistory)) s.recipeHistory = [];
   if(s.promise===undefined) s.promise = null;
   if(s.profile===undefined) s.profile = null;
@@ -3388,6 +3390,256 @@ var CHALLENGES = [
 ];
 function todayChallenge(){ return pick(CHALLENGES, 11); }
 
+/* ============================================================
+   SVトレーニング（毎日3問のサービング数クイズ）
+   ・狙い: 利用者自身のSV認識のズレを毎日少しずつ矯正し、
+     記録の精度そのものを高める（本アプリの計測の土台）
+   ・出題は食事バランスガイドのSV基準に基づく
+     主食1SV=炭水化物約40g(ごはん小盛り1杯) / 副菜1SV=野菜等70g
+     主菜1SV=たんぱく質約6g / 乳製品1SV=カルシウム約100mg / 果物1SV=約100g
+   ・数量問題に加え、間違えやすい「分類問題」(枝豆・豆乳・アイス等)を混在
+   ・5グループを日替わりで3つずつ回し、直近に出た問題は約45問ぶん避ける
+   ============================================================ */
+const SVQUIZ = [
+/* --- 主食 (1SV=炭水化物約40g) --- */
+{g:"主食",q:"ごはん小盛り1杯(100g)は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"主食1SVの基準がまさにこれ。「ごはん小盛り1杯=1SV」を物差しにすると、他の主食も測りやすくなります。"},
+{g:"主食",q:"ごはん中盛り1杯(150g)は、主食何SV？",c:["1SV","1.5SV","2SV"],a:1,e:"小盛り(100g)=1SVの1.5倍なので1.5SV。ふだんの茶碗が何gかを一度量っておくと、毎日の記録がぐっと正確になります。"},
+{g:"主食",q:"ごはん大盛り1杯(200g)は、主食何SV？",c:["1.5SV","2SV","3SV"],a:1,e:"小盛り2杯分で2SV。丼もののごはんはだいたいこの量です。"},
+{g:"主食",q:"コンビニのおにぎり1個は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"おにぎり1個(ごはん約100g)=1SV。2個食べたら2SVです。"},
+{g:"主食",q:"食パン6枚切り1枚は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"食パン1枚=1SV。トースト2枚の朝食なら主食2SVです。"},
+{g:"主食",q:"ロールパン2個は、主食何SV？",c:["1SV","1.5SV","2SV"],a:0,e:"ロールパンは小さいので2個で1SV(1個=0.5SV)。パンの大きさで数え方が変わる代表例です。"},
+{g:"主食",q:"かけうどん1杯は、主食何SV？",c:["1SV","1.5SV","2SV"],a:2,e:"うどん1玉は約2SV。麺類は1杯でごはん小盛り2杯分の主食になります。"},
+{g:"主食",q:"もりそば1枚は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"そば1人前も約2SV。「麺は1杯=2SV」とセットで覚えるのが実用的です。"},
+{g:"主食",q:"スパゲッティ1人前(乾麺80g)は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"パスタ1人前=約2SV。ソースの具は別のグループとして数えます。"},
+{g:"主食",q:"ラーメン1杯(麺1玉)は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"中華麺1玉=約2SV。スープや具は主食には含めません。"},
+{g:"主食",q:"そうめん1人前(乾麺100g・約2束)は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"そうめんも1人前で約2SV。つるっと入りますが、ごはん小盛り2杯分です。"},
+{g:"主食",q:"おかゆ茶碗1杯は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"水分が多いぶん、茶碗1杯で約1SV。同じ1杯でもごはんとは密度が違います。"},
+{g:"主食",q:"サンドイッチ(食パン2枚使用)は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"パン2枚分なので主食2SV。ハムや卵などの具は主菜として別に数えます。"},
+{g:"主食",q:"カレーライスのごはん(やや多め・180g)は、主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"カレーや丼のごはんは180〜200gが多く、約2SV。外食の主食は「小盛り2杯分」と見ておくのが安全です。"},
+{g:"主食",q:"親子丼や牛丼など、丼もののごはんは主食何SV？",c:["1SV","2SV","3SV"],a:1,e:"丼のごはんは約2SV。上の具(鶏や牛)は主菜として別カウントです。"},
+{g:"主食",q:"お茶漬け(ごはん100g)は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"お茶をかけても、ごはん100g=1SVは変わりません。量で数えるのがSVの基本です。"},
+{g:"主食",q:"コーンフレーク1食分(40g)は、主食およそ何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"シリアル1食分は約1SV。かける牛乳は乳製品として別に数えます。"},
+{g:"主食",q:"うどん半玉(小盛り)は、主食何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"1玉=2SVなので半玉=1SV。夜遅い日の「麺は半分」は、SVで見ても理にかなっています。"},
+{g:"主食",q:"「とうもろこし」は、どのグループで数える？",c:["主食","副菜","果物"],a:1,e:"甘いとうもろこしは野菜の仲間で「副菜」。穀物のイメージがありますが、バランスガイドでは野菜扱いです。"},
+{g:"主食",q:"肉じゃがの「じゃがいも」は、どのグループで数える？",c:["主食","副菜","主菜"],a:1,e:"いも類は「副菜」。ごはんの仲間ではなく野菜側です。ポテトサラダも同じく副菜になります。"},
+/* --- 副菜 (1SV=野菜・いも・きのこ・海藻など70g) --- */
+{g:"副菜",q:"ほうれん草のお浸し(小鉢1皿)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"小鉢1皿=約1SV(野菜70g)。「小鉢1つで1SV」が副菜のいちばん便利な物差しです。"},
+{g:"副菜",q:"野菜サラダ(小皿1皿)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"生野菜はかさが大きく見えても、小皿1杯で約70g=1SVです。"},
+{g:"副菜",q:"きゅうりとわかめの酢の物(小鉢)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"海藻も副菜の仲間。小鉢1つで1SVです。"},
+{g:"副菜",q:"野菜たっぷりの具だくさん味噌汁は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"具がたっぷりなら味噌汁も立派な副菜1SV。逆に具が少しの汁物は、副菜には数えないでおきましょう。"},
+{g:"副菜",q:"きんぴらごぼう(小鉢)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"根菜の小鉢も1SV。ごぼうやれんこんも野菜としてしっかり数えて大丈夫です。"},
+{g:"副菜",q:"ひじきの煮物(小鉢)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"海藻の煮物も副菜1SV。「野菜・いも・きのこ・海藻」が副菜の4兄弟です。"},
+{g:"副菜",q:"きのこのソテー(小鉢)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"きのこも副菜。低カロリーですが、SVの上ではきちんと1皿に数えます。"},
+{g:"副菜",q:"野菜の煮物(里芋・にんじんなど、中くらいの鉢)は、副菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"中鉢の煮物は小鉢2つ分=2SV。「小鉢なら1、中鉢なら2」が目安です。"},
+{g:"副菜",q:"野菜炒め(1人前・中皿)は、副菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"野菜炒め1人前は約140g=2SV。加熱するとかさが減るので、見た目より多くの野菜がとれています。"},
+{g:"副菜",q:"じゃがいもの煮っころがし(中鉢)は、副菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"いも料理の中鉢は2SV。いもは主食ではなく副菜側で数えるのがポイントです。"},
+{g:"副菜",q:"生のトマト1個(約150g)は、副菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"副菜1SV=70gなので、中玉トマト1個で約2SV。丸ごと野菜は意外と「稼げる」一品です。"},
+{g:"副菜",q:"ミニトマト3個(約50g)は、副菜としてどう数える？",c:["ほぼ0.5SV","1SV","2SV"],a:0,e:"70gに届かないので約0.5SV。彩り程度の野菜は「半分」と数えると、記録が実態に近づきます。"},
+{g:"副菜",q:"とんかつに添えられた千切りキャベツ(ひと山)は、副菜何SV？",c:["数えない","1SV","2SV"],a:1,e:"付け合わせでも約70gあれば1SV。残さず食べれば立派な副菜です。"},
+{g:"副菜",q:"焼きなす1本分は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"なす1本は約80g=1SV。「野菜1個・1本=だいたい1SV」の感覚が身につくと早いです。"},
+{g:"副菜",q:"ポテトサラダ(小鉢)は、副菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"いも+野菜で約1SV。マヨネーズでエネルギーは上がりますが、SVの数え方は材料の量で決まります。"},
+{g:"副菜",q:"カレーライスに入っている野菜(じゃがいも・にんじん・玉ねぎ)は、副菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"家庭のカレー1皿の野菜はだいたい2SV。「カレー=主食2・主菜2・副菜2」とセットで覚えると外食でも使えます。"},
+{g:"副菜",q:"野菜ジュース(200ml)は、副菜としてどう数える？",c:["数えない","約1SVとして数える","2SVとして数える"],a:1,e:"野菜ジュースは飲んだ量の半分の野菜に換算するのが目安。200mlで約1SV相当ですが、噛む野菜より満足感は少なめです。"},
+{g:"副菜",q:"「枝豆」は、どのグループで数える？",c:["副菜","主菜","果物"],a:0,e:"ひっかけ問題です。大豆は主菜ですが、枝豆は熟す前の「野菜」なので副菜。同じ豆でも育ち方で変わります。"},
+{g:"副菜",q:"「こんにゃく」は、どのグループで数える？",c:["数えない","副菜","主菜"],a:1,e:"こんにゃくはいも由来で副菜の仲間。エネルギーはほぼゼロですが、かさとして数えてOKです。"},
+{g:"副菜",q:"「海藻サラダ」は、どのグループで数える？",c:["副菜","主菜","数えない"],a:0,e:"海藻は副菜。DVS(10食品群)でも海藻は独立の1群で、意識しないと抜けやすい食材です。"},
+/* --- 主菜 (1SV=たんぱく質約6g) --- */
+{g:"主菜",q:"納豆1パックは、主菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"納豆1パック=1SV。主菜1SV=たんぱく質約6gで、卵1個・豆腐1/3丁もほぼ同じです。"},
+{g:"主菜",q:"冷奴(豆腐1/3丁)は、主菜何SV？",c:["1SV","2SV","3SV"],a:0,e:"豆腐1/3丁=1SV。半丁なら1.5SV前後です。豆腐は見た目の割にたんぱく質が穏やかな食材です。"},
+{g:"主菜",q:"目玉焼き(卵1個)は、主菜何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"卵1個=1SV。ゆで卵でも生卵でも同じです。"},
+{g:"主菜",q:"卵焼き(卵2個分)は、主菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"卵1個=1SVなので2個で2SV。使った卵の数で数えるだけです。"},
+{g:"主菜",q:"焼き魚(鮭1切れ)は、主菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"魚1切れ=2SV。「卵・豆腐は1、魚は2、肉料理は3」が主菜のいちばん大事な序列です。"},
+{g:"主菜",q:"あじの開き(干物1枚)は、主菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"干物1枚も約2SV。魚はだいたい1人前=2SVと覚えておきましょう。"},
+{g:"主菜",q:"まぐろの刺身(6〜7切れ)は、主菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"刺身1人前=約2SV。醤油は塩分側の話で、SVには影響しません。"},
+{g:"主菜",q:"さばの味噌煮(1切れ)は、主菜何SV？",c:["1SV","2SV","3SV"],a:1,e:"煮ても焼いても魚1切れ=2SV。調理法でSVは変わりません(エネルギーは変わります)。"},
+{g:"主菜",q:"ハンバーグ(1人前)は、主菜何SV？",c:["1SV","2SV","3SV"],a:2,e:"肉料理1人前=3SV。1日の主菜目標が4〜5SVの人は、ハンバーグの日は他をあっさりめに、が定石です。"},
+{g:"主菜",q:"豚の生姜焼き(1人前)は、主菜何SV？",c:["1SV","2SV","3SV"],a:2,e:"肉のおかず1人前=3SV。主菜は「積みすぎ」が起こりやすいグループなので、この3SVの感覚が要です。"},
+{g:"主菜",q:"鶏の唐揚げ(3〜4個)は、主菜何SV？",c:["1SV","2SV","3SV"],a:2,e:"唐揚げ3〜4個で3SV。おつまみでつまんだ分も、ちゃんと主菜に積まれています。"},
+{g:"主菜",q:"茶碗蒸し1個は、主菜何SV？",c:["1SV","2SV","3SV"],a:0,e:"卵1個弱なので1SV。やさしい見た目どおり、主菜としても軽めです。"},
+{g:"主菜",q:"ウインナー3本は、主菜およそ何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"ウインナー3本で約1SV。脂質が多いので、エネルギーの割にたんぱく質は控えめです。"},
+{g:"主菜",q:"サラダチキン半分(約50g)は、主菜およそ何SV？",c:["1SV","2SV","3SV"],a:1,e:"鶏むね50gでたんぱく質約11g=約2SV。1パック食べると3〜4SVで、実は肉料理1人前と同等です。"},
+{g:"主菜",q:"ツナ缶1缶(70g)は、主菜およそ何SV？",c:["1SV","2SV","3SV"],a:1,e:"ツナ缶1缶=約2SV。サラダにのせた日は、副菜だけでなく主菜も進んでいます。"},
+{g:"主菜",q:"餃子5個は、主菜およそ何SV？",c:["1SV","2SV","3SV"],a:1,e:"餃子5個で主菜約2SV。皮の主食分は小さいので、ごはんと合わせるなら主食は普通に数えてOKです。"},
+{g:"主菜",q:"焼き鳥(もも2本)は、主菜およそ何SV？",c:["1SV","2SV","3SV"],a:1,e:"もも2本で約2SV。3〜4本なら肉料理1人前(3SV)相当になります。"},
+{g:"主菜",q:"豚汁に入っている少量の豚肉は、主菜としてどう数える？",c:["数えない(副菜1SVの汁物とする)","主菜1SV","主菜2SV"],a:0,e:"具の肉が少量なら主菜には数えず、豚汁は「具だくさんの副菜1SV」とするのが目安。汁物の肉は過大評価しがちなポイントです。"},
+{g:"主菜",q:"「豆腐」は、どのグループで数える？",c:["主菜","副菜","乳製品"],a:0,e:"大豆製品は主菜。肉・魚・卵・大豆が主菜の4本柱です。"},
+{g:"主菜",q:"卵かけごはんの卵1個は、主菜何SV？",c:["数えない","1SV","2SV"],a:1,e:"かけても焼いても卵1個=1SV。「ごはんの一部」に見えて、ちゃんと主菜です。"},
+/* --- 乳製品 (1SV=カルシウム約100mg) --- */
+{g:"乳製品",q:"牛乳コップ半分(100ml)は、乳製品何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"牛乳100ml=1SV。ここが乳製品の基準点です。"},
+{g:"乳製品",q:"牛乳コップ1杯(200ml)は、乳製品何SV？",c:["1SV","2SV","3SV"],a:1,e:"コップ1杯=2SV。1日の目標(2SV)が牛乳1杯で達成できる、というのは覚えておくと便利です。"},
+{g:"乳製品",q:"ヨーグルト1パック(100g前後)は、乳製品何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"ヨーグルト1個=1SV。朝食にひとつ足すだけで目標の半分です。"},
+{g:"乳製品",q:"スライスチーズ1枚は、乳製品何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"スライスチーズ1枚=1SV。小さくてもカルシウムはしっかり入っています。"},
+{g:"乳製品",q:"6Pチーズ1個は、乳製品何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"プロセスチーズひとかけ=1SV。持ち歩ける乳製品として優秀です。"},
+{g:"乳製品",q:"飲むヨーグルト(100ml)は、乳製品およそ何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"100mlで約1SV。加糖タイプは糖分もついてくるので、量の感覚と一緒に覚えておきましょう。"},
+{g:"乳製品",q:"カフェオレ(牛乳100ml使用)の乳製品は何SV？",c:["数えない","1SV","2SV"],a:1,e:"使われている牛乳の分だけ数えます。100mlなら1SV。コーヒー自体はどのグループにも入りません。"},
+{g:"乳製品",q:"低脂肪乳コップ1杯(200ml)は、乳製品何SV？",c:["1SV","2SV","3SV"],a:1,e:"低脂肪でもカルシウムはほぼ同じなので2SV。脂質を抑えたい人には賢い選択です。"},
+{g:"乳製品",q:"アイスクリームは、乳製品として数える？",c:["乳製品1SVとして数える","数えない(菓子・嗜好品として扱う)","乳製品2SVとして数える"],a:1,e:"アイスは糖分と脂肪が主体なので「菓子」扱い。乳製品のカウントには入れず、間食として記録するのが本アプリの流儀です。"},
+{g:"乳製品",q:"豆乳(200ml)は、乳製品として数える？",c:["乳製品2SV","数えない(大豆製品=主菜の仲間)","乳製品1SV"],a:1,e:"ひっかけ問題です。豆乳は「乳」の字がつきますが大豆製品なので主菜側(約1SV)。カルシウム量も牛乳よりかなり少なめです。"},
+{g:"乳製品",q:"チーズトーストのチーズ1枚は、乳製品何SV？",c:["数えない","1SV","2SV"],a:1,e:"料理に溶けていても1枚は1SV。「使った材料で数える」がSVの基本ルールです。"},
+{g:"乳製品",q:"生クリーム(ケーキの上のホイップ)は、乳製品として数える？",c:["乳製品1SV","数えない(脂肪が主体)","乳製品2SV"],a:1,e:"生クリームは脂肪が主体でカルシウムはわずか。乳製品には数えず、菓子の一部として考えます。"},
+/* --- 果物 (1SV=約100g) --- */
+{g:"果物",q:"みかん1個は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"みかん1個=1SV(約100g)。果物1SV=100gが基準です。"},
+{g:"果物",q:"りんご半分は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"りんごは1個200g前後なので、半分で1SV。まるごと1個なら2SVです。"},
+{g:"果物",q:"りんご1個は、果物何SV？",c:["1SV","2SV","3SV"],a:1,e:"1個で2SV=1日の目標量。「りんご1個で果物はクリア」と覚えると簡単です。"},
+{g:"果物",q:"バナナ1本は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"バナナ1本(可食部約100g)=1SV。朝の1本で目標の半分です。"},
+{g:"果物",q:"ぶどう半房は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"半房で約100g=1SV。粒でつまむと感覚が狂いやすいので「半房=1」で覚えましょう。"},
+{g:"果物",q:"桃1個は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"桃1個=1SV。夏の果物習慣にちょうど良いサイズです。"},
+{g:"果物",q:"梨半分は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"梨は大きめなので半分で1SV。1個ならほぼ2SVです。"},
+{g:"果物",q:"柿1個は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"柿1個=1SV。秋の果物のスタメンです。"},
+{g:"果物",q:"キウイ1個は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"キウイ1個=約1SV。ビタミンCの効率がとても良い果物です。"},
+{g:"果物",q:"いちご6粒(約100g)は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"6粒で約1SV。ショートケーキの上の1粒では、残念ながら果物とは数えられません。"},
+{g:"果物",q:"スイカひと切れ(約100g)は、果物何SV？",c:["0.5SV","1SV","2SV"],a:1,e:"ひと切れ=1SV。水分が多くても100g=1SVの基準は同じです。"},
+{g:"果物",q:"果汁100%ジュース(200ml)は、果物としてどう数える？",c:["2SV","約1SV(飲んだ量の半分に換算)","数えない"],a:1,e:"ジュースは飲んだ量の半分の果物に換算します。200mlで約1SV。噛む果物のほうが満足感も栄養も上、というおまけ付きの知識です。"},
+{g:"果物",q:"いちごジャムは、果物として数える？",c:["果物1SV","数えない(砂糖が主体の菓子扱い)","果物0.5SV"],a:1,e:"ジャムは糖分が主体なので果物には数えません。「果物の味」と「果物」は別もの、が合言葉です。"},
+{g:"果物",q:"缶詰の桃(シロップ漬け・半割2切れ)は、果物としてどう数える？",c:["数えない","約1SV(果肉の分だけ)","3SV"],a:1,e:"果肉約100gで1SV。ただしシロップの糖分は別なので、汁は飲み干さないのが賢い食べ方です。"},
+/* --- 複合(料理まるごと): 外食・単品もので特に認識がずれやすい難問 --- */
+{g:"複合",q:"【難問】カレーライス1皿は、どう数える？",c:["主食2・副菜2・主菜2","主食3・副菜1・主菜1","主食2・副菜0・主菜3"],a:0,e:"ごはん多めで主食2、ルーに溶けた野菜で副菜2、肉で主菜2。「カレーは2・2・2」と覚えると外食で迷いません。ルーの油脂でエネルギーは高めです。"},
+{g:"複合",q:"【難問】親子丼1杯は、どう数える？",c:["主食2・主菜2","主食1・主菜1","主食2・主菜4"],a:0,e:"丼ごはんで主食2、鶏肉+卵で主菜約2。野菜はほぼ入っていないので、副菜は小鉢や味噌汁で別に足すのが定石です。"},
+{g:"複合",q:"【難問】牛丼(並盛)は、どう数える？",c:["主食2・主菜2","主食2・主菜4","主食1・主菜2"],a:0,e:"ごはん約2SV、牛肉で主菜約2SV。上の玉ねぎは少量なので副菜には数えません。ここでも「副菜が足りない」が単品どんぶりの弱点です。"},
+{g:"複合",q:"【難問】かつ丼1杯は、どう数える？",c:["主食2・主菜3","主食2・主菜1","主食1・主菜2"],a:0,e:"カツは肉料理1人前で主菜3。卵でとじれば実質3SV超です。丼の中でも主菜がいちばん重い部類で、その日の他の食事はあっさりが正解。"},
+{g:"複合",q:"【難問】天ぷらうどん(えび天1本)の「主菜」は何SV？",c:["数えない","1SV","3SV"],a:1,e:"えび天1本=主菜1SV。麺は主食2SVです。衣の油はエネルギーに乗りますが、SVは中身のえびで数えます。"},
+{g:"複合",q:"【難問】ラーメン(チャーシュー2枚・ねぎ少々)は、どう数える？",c:["主食2・主菜1","主食2・主菜3","主食3・主菜1"],a:0,e:"麺で主食2、チャーシュー2枚で主菜約1。ねぎやメンマ程度の野菜は副菜に数えません。「ラーメンだけの日」は副菜と乳製品・果物が丸ごと空く日です。"},
+{g:"複合",q:"【難問】ソース焼きそば1人前は、どう数える？",c:["主食1・副菜2","主食2・副菜0","主食2・副菜2"],a:0,e:"意外な正解。公式の目安では麺の量から主食1、炒めたキャベツ・もやしで副菜2です。「麺=主食2」の例外として覚える価値があります。"},
+{g:"複合",q:"【難問】お好み焼き1枚は、どう数える？",c:["主食1・副菜1・主菜1","主食2・副菜0・主菜1","主食1・副菜2・主菜2"],a:0,e:"生地で主食1、キャベツで副菜1、卵・豚で主菜1。1枚で3グループに散る料理です。粉もの=主食だけ、ではありません。"},
+{g:"複合",q:"【難問】ナポリタンスパゲッティは、どう数える？",c:["主食2・副菜1","主食2・副菜0","主食1・副菜1"],a:0,e:"麺で主食2、ピーマン・玉ねぎ・トマトで副菜1。具の野菜がしっかり入る麺料理は、副菜も動きます。"},
+{g:"複合",q:"【難問】にぎり寿司8貫は、どう数える？",c:["主食2・主菜2","主食1・主菜1","主食2・主菜4"],a:0,e:"シャリの合計はごはん小盛り2杯分で主食2、ネタで主菜約2。「寿司=軽い」印象より主食がしっかりあります。"},
+{g:"複合",q:"【難問】卵チャーハン1皿は、どう数える？",c:["主食2・主菜1","主食1・主菜1","主食2・主菜3"],a:0,e:"ごはんで主食2、卵1個分で主菜1。チャーシューやえびが多めなら主菜をもう1つ足します。"},
+{g:"複合",q:"【難問】ハンバーガー1個は、どう数える？",c:["主食1・主菜2","主食2・主菜3","主食1・主菜1"],a:0,e:"バンズで主食1、パティで主菜約2。ポテトとセットにすると副菜ではなく油と主食寄りが増える、というのも合わせて覚えたい感覚です。"},
+{g:"複合",q:"【難問】卵サンド(食パン2枚)は、どう数える？",c:["主食2・主菜1","主食1・主菜1","主食2・主菜2"],a:0,e:"パン2枚で主食2、卵1個分で主菜1。マヨネーズはエネルギー側の話です。"},
+{g:"複合",q:"【難問】オムライス1皿は、どう数える？",c:["主食2・主菜2","主食1・主菜1","主食2・主菜0"],a:0,e:"ケチャップライスで主食2、包む卵2個で主菜2。卵は「皮」に見えても主菜としてしっかり数えます。"},
+{g:"複合",q:"【難問】天丼(えび天2本)は、どう数える？",c:["主食2・主菜2","主食2・主菜0","主食1・主菜3"],a:0,e:"丼めしで主食2、えび2本で主菜約2。天ぷらでも中身の食材で数えるのがルール。衣の油はエネルギーに乗ります。"},
+{g:"複合",q:"【難問】冷やし中華(卵・ハム・きゅうり・トマト)は、どう数える？",c:["主食2・主菜1・副菜1","主食1・主菜2・副菜2","主食2・主菜3・副菜0"],a:0,e:"麺で主食2、錦糸卵+ハムで主菜約1、野菜で副菜約1。単品麺の中では例外的にバランスが良い優等生です。"},
+{g:"複合",q:"【難問】ざるそば単品は、どう数える？",c:["主食2のみ","主食2・主菜1","主食1のみ"],a:0,e:"主食2だけで、主菜も副菜もゼロ。ここに温泉卵(主菜1)ととろろ(副菜)を足せる人が、SV感覚の合格者です。"},
+];
+/* --- レシピ連動問題: 内蔵レシピ全品のSV換算から自動生成 ---
+   ・単一グループのレシピ →「主菜およそ何SV？」の数量問題
+   ・複数グループのレシピ →「どう数える？」の内訳(複合)問題
+   ・料理名を覚える入口にもなり、解説からレシピタブへ飛べる */
+let QUIZ_ALL_CACHE = null;
+function quizBank(){
+  if(QUIZ_ALL_CACHE) return QUIZ_ALL_CACHE;
+  const GORDER = ["主食","副菜","主菜","乳製品","果物"];
+  const fmt = function(v){ return String(v); };
+  const comboStr = function(sv){ return GORDER.filter(function(g){return sv[g]>0;}).map(function(g){return g+fmt(sv[g]);}).join("・"); };
+  const gen = [];
+  RECIPES.forEach(function(r){
+    const keys = GORDER.filter(function(g){ return r.v[g]>0; });
+    if(!keys.length) return;
+    const seed = stableHash("rq|" + r.n);
+    if(keys.length===1){
+      const g = keys[0], t = r.v[g];
+      const cands = [t-1, t-0.5, t+0.5, t+1, t+1.5].filter(function(x){ return x>=0.5 && x!==t; });
+      const d1 = cands[seed % cands.length];
+      const rest = cands.filter(function(x){ return x!==d1; });
+      const d2 = rest[(seed>>>4) % rest.length];
+      const opts = [t,d1,d2].sort(function(a,b){return a-b;}).map(function(x){ return fmt(x)+"SV"; });
+      gen.push({ g:g, rn:r.n,
+        q:"レシピ問題:『" + r.n + "』(1人分)は、" + g + "およそ何SV？",
+        c:opts, a:opts.indexOf(fmt(t)+"SV"),
+        e:"『" + r.n + "』のSV換算は " + comboStr(r.v) + "(約" + r.k + "kcal)。内蔵レシピ全品にSVがついているので、迷ったらレシピで答え合わせできます。" });
+    } else {
+      const correct = comboStr(r.v);
+      const mk = function(delta, ki){
+        const sv = {}; keys.forEach(function(g){ sv[g]=r.v[g]; });
+        const g = keys[ki % keys.length];
+        sv[g] = Math.max(0.5, sv[g] + delta);
+        return comboStr(sv);
+      };
+      const perturbs = [];
+      for(let ki=0; ki<keys.length; ki++){ [1,-0.5,0.5,-1,1.5].forEach(function(dl){ perturbs.push([dl,ki]); }); }
+      const uniq = [];
+      for(let i=0; i<perturbs.length && uniq.length<2; i++){
+        const idx = (seed + i*7) % perturbs.length;
+        const s = mk(perturbs[idx][0], perturbs[idx][1]);
+        if(s!==correct && uniq.indexOf(s)<0) uniq.push(s);
+      }
+      const opts = [correct, uniq[0], uniq[1]];
+      const ord = seed % 3;
+      const arranged = [opts[ord], opts[(ord+1)%3], opts[(ord+2)%3]];
+      gen.push({ g:"複合", rn:r.n,
+        q:"レシピ問題:『" + r.n + "』(1人分)は、どう数える？",
+        c:arranged, a:arranged.indexOf(correct),
+        e:"『" + r.n + "』のSV換算は " + correct + "(約" + r.k + "kcal)。複合的な料理はグループごとに分解して数えるのがコツです。" });
+    }
+  });
+  QUIZ_ALL_CACHE = SVQUIZ.concat(gen);
+  return QUIZ_ALL_CACHE;
+}
+/* 今日の3問を決める(日替わり・直近45問は再出題しない・グループを順繰りに)
+   6グループ(5料理グループ+複合の難問)を1日3つずつ、2日で一巡する。
+   各枠は「基本問題」と「レシピ問題」を日替わりで半々に混ぜる */
+function pickTodaysQuizIds(){
+  const bank = quizBank();
+  const groups = ["主食","副菜","主菜","乳製品","果物","複合"];
+  const recent = S.svQuizHistory || [];
+  const ids = [];
+  for(let k=0;k<3;k++){
+    const g = groups[(daySeed*3 + k) % 6];
+    const wantRecipe = stableHash(TODAY + "|svqsrc|" + g + "|" + k) % 2 === 1;
+    const collect = function(rq){
+      const pool = [];
+      for(let i=0;i<bank.length;i++){
+        if(bank[i].g===g && recent.indexOf(i)<0 && ids.indexOf(i)<0 && (!!bank[i].rn)===rq) pool.push(i);
+      }
+      return pool;
+    };
+    let pool = collect(wantRecipe);
+    if(!pool.length) pool = collect(!wantRecipe);
+    if(!pool.length){
+      for(let i=0;i<bank.length;i++){ if(bank[i].g===g && ids.indexOf(i)<0) pool.push(i); }
+    }
+    ids.push(pool[stableHash(TODAY + "|svq|" + g + "|" + k) % pool.length]);
+  }
+  return ids;
+}
+function todaysQuizState(){
+  const bad = S.svQuiz && Array.isArray(S.svQuiz.ids) && S.svQuiz.ids.some(function(i){ return !quizBank()[i]; });
+  if(!S.svQuiz || S.svQuiz.date!==TODAY || !Array.isArray(S.svQuiz.ids) || bad){
+    S.svQuiz = { date:TODAY, ids: pickTodaysQuizIds(), results: [] };
+    save();
+  }
+  return S.svQuiz;
+}
+let svqFeedback = null;   // 直前に答えた問題の解説表示用(画面遷移で消える一時状態)
+function svQuizCardHTML(){
+  const st = todaysQuizState();
+  const n = st.results.length;
+  const stats = S.svQuizStats || { asked:0, correct:0 };
+  const rate = stats.asked >= 5 ? Math.round(stats.correct/stats.asked*100) : null;
+  let inner;
+  if(svqFeedback){
+    const q = quizBank()[svqFeedback.id];
+    const okNow = svqFeedback.pick === q.a;
+    inner =
+      '<div style="font-size:13px;font-weight:700;line-height:1.8">' + esc(q.q) + '</div>' +
+      '<div style="margin:8px 0 6px;font-size:15px;font-weight:900;color:' + (okNow ? 'var(--green)' : 'var(--ume)') + '">' +
+        (okNow ? '○ 正解！' : '× おしい！ 正解は「' + esc(q.c[q.a]) + '」') + '</div>' +
+      '<div style="font-size:12px;line-height:1.9;color:var(--ink);background:var(--pale);border-radius:10px;padding:10px 12px">' + esc(q.e) + '</div>' +
+      (q.rn ? '<button class="recipe-go" id="svqRecipe" data-rname="' + esc(q.rn) + '">🍳 このレシピを見てみる</button>' : '') +
+      '<button class="btn-main" id="svqNext" style="margin-top:10px;padding:10px;font-size:13px">' +
+        (n < st.ids.length ? '次の問題へ（あと' + (st.ids.length - n) + '問）' : '今日のトレーニングを終える') + '</button>';
+  } else if(n >= st.ids.length){
+    const ok = st.results.filter(function(r){ return r.ok; }).length;
+    inner =
+      '<div style="font-size:13px;line-height:1.9">今日の3問はおしまい。正解 <b>' + ok + '／' + st.ids.length + '</b>' +
+      (rate!=null ? '（通算正答率 ' + rate + '%）' : '') + '。' +
+      (ok===st.ids.length ? 'お見事です。この感覚のまま、下の記録もつけていきましょう。' : '間違えたところが、記録がずれやすいところ。明日も少しずつ合わせていきましょう。') + '</div>';
+  } else {
+    const q = quizBank()[st.ids[n]];
+    inner =
+      '<div style="font-size:10px;color:var(--sub);font-weight:700">第' + (n+1) + '問／' + st.ids.length + '問　【' + q.g + (q.rn?'・レシピ連動':'') + '】</div>' +
+      '<div style="font-size:13px;font-weight:700;line-height:1.8;margin:6px 0 10px">' + esc(q.q) + '</div>' +
+      q.c.map(function(c,ci){
+        return '<button class="opt" data-svq="' + st.ids[n] + '" data-svqc="' + ci + '">' + esc(c) + '</button>';
+      }).join("");
+  }
+  return secHTML("SV TRAINING","SVトレーニング") +
+    '<div class="card" style="border-color:var(--green)">' +
+      '<div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">記録の精度は「1SVの目測」で決まります。基本問題と内蔵レシピ全品から、毎日3問の感覚合わせ。</div>' +
+      inner +
+    '</div>';
+}
+
 
 /* ============================================================
    おすすめレシピ
@@ -3498,6 +3750,7 @@ function recipeCardHTML(r, open){
     '</div></details>';
 }
 let recipeFilter = { tag:null, star:null };
+let recipeSpotlight = null;   // SVクイズから飛んできたときに開いて見せるレシピ名
 function renderRecipe(){
   const p = S.profile, d = S.days[TODAY];
   const today = todaysRecipePicks(p, d);
@@ -3518,6 +3771,11 @@ function renderRecipe(){
   RECIPES.forEach(function(r){ r.t.forEach(function(t){ tagCounts[t]=(tagCounts[t]||0)+1; }); });
   const tagOrder = ["副菜","主菜","主食","乳製品","果物","魚","肉","卵","大豆","海藻","いも","朝食","夜遅め","汁物","間食","減塩","多様性"];
   view.innerHTML = '<div class="fadein">' +
+    (recipeSpotlight ? (function(){
+      const r = RECIPES.find(function(x){ return x.n===recipeSpotlight; });
+      if(!r) return "";
+      return secHTML("FROM SV TRAINING","クイズに出たレシピ") + recipeCardHTML(r, true);
+    })() : "") +
     secHTML("TODAY'S RECIPES","今日のおすすめレシピ") +
     '<div class="card" style="background:var(--pale);border-color:var(--green)">' +
       '<div style="font-size:13px;line-height:1.9;color:var(--ink)">' + esc(today.need.reason) + '</div>' +
@@ -4215,6 +4473,48 @@ const SV_INFO = {
   "乳製品":"牛乳コップ半分・ヨーグルト1個など（=1）",
   "果物":"みかん1個・りんご半分など（=1）",
 };
+/* --- 5つの料理グループの厳密な定義 ---
+   「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)および
+   フードガイド(仮称)検討会報告書に基づく。1SV=1つ(サービング)。
+   本アプリの「皿」はこの「つ(SV)」と同義。 */
+const SV_DEFS = [
+  { k:"主食", what:"ごはん、パン、麺・パスタなどを主材料とする料理",
+    unit:"主材料に由来する炭水化物 約40g", ex:"ごはん小盛り1杯・おにぎり1個・食パン1枚=1SV／うどん・そば・パスタ1人前=2SV" },
+  { k:"副菜", what:"野菜、いも、豆類(大豆を除く)、きのこ、海藻などを主材料とする料理",
+    unit:"主材料の重量 約70g", ex:"野菜の小鉢1皿=1SV／野菜炒め・野菜の煮物(中鉢)=2SV" },
+  { k:"主菜", what:"肉、魚、卵、大豆・大豆製品などを主材料とする料理",
+    unit:"主材料に由来するたんぱく質 約6g", ex:"卵1個・納豆1パック・豆腐1/3丁=1SV／魚1切れ=2SV／肉料理1人前=3SV" },
+  { k:"乳製品", what:"牛乳、ヨーグルト、チーズなどの牛乳・乳製品",
+    unit:"カルシウム 約100mg", ex:"牛乳100ml・ヨーグルト1個・チーズ1枚=1SV／牛乳コップ1杯(200ml)=2SV" },
+  { k:"果物", what:"りんご、みかんなどの果実、およびすいか・いちごなどの果実的な野菜",
+    unit:"主材料の重量 約100g", ex:"みかん1個・バナナ1本・りんご半分=1SV" },
+];
+const SV_DEF_NOTES = [
+  "菓子・嗜好飲料は5つのグループには含めません(「楽しく適度に」の扱い。本アプリでは間食として別に記録します)。",
+  "油脂・調味料は数えません(料理のエネルギーには含まれますが、SVの単位にはなりません)。",
+  "水・お茶は食事に欠かせないものとして扱い、SVには数えません。",
+  "カレーライスや丼もののような複合的な料理は、主食・副菜・主菜などに分解してそれぞれ数えます。",
+  "豆類の注意: 大豆・大豆製品(豆腐・納豆など)は主菜、大豆以外の豆といんげん・枝豆などは副菜です。",
+];
+function svDefinitionHTML(){
+  return '<details style="margin:2px 0 10px">' +
+    '<summary style="cursor:pointer;font-size:11px;color:var(--green);font-weight:700;list-style:none">▸ 5つの料理グループの正式な定義(食事バランスガイド)を見る</summary>' +
+    '<div style="margin-top:8px;background:var(--pale);border-radius:10px;padding:10px 12px">' +
+      '<div style="font-size:10px;color:var(--sub);line-height:1.8;margin-bottom:8px">本アプリの「1皿」は、食事バランスガイド(厚生労働省・農林水産省決定、2005年)の「1つ(SV=サービング)」と同じ数え方です。各グループの正式な定義は次のとおりです。</div>' +
+      SV_DEFS.map(function(x){
+        return '<div style="margin-bottom:8px">' +
+          '<div style="font-size:12px;font-weight:700;color:var(--deep)">' + x.k + '<span style="font-weight:400;color:var(--sub);font-size:10px">　1SV = ' + x.unit + '</span></div>' +
+          '<div style="font-size:11px;color:var(--ink);line-height:1.8">' + x.what + '。</div>' +
+          '<div style="font-size:10px;color:var(--sub);line-height:1.7">例: ' + x.ex + '</div>' +
+        '</div>';
+      }).join("") +
+      '<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:2px">' +
+        SV_DEF_NOTES.map(function(t){ return '<div style="font-size:10px;color:var(--sub);line-height:1.8">・' + t + '</div>'; }).join("") +
+      '</div>' +
+      '<div style="font-size:9px;color:var(--sub);margin-top:8px;line-height:1.7">出典: 「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)、フードガイド(仮称)検討会報告書。詳細は農林水産省Webサイト「食事バランスガイドについて」を参照してください(本アプリから外部への通信は行いません)。</div>' +
+    '</div>' +
+  '</details>';
+}
 function sleepDurationText(sl){
   const hasBoth = sl && sl.bed!=null && sl.wake!=null;
   const dur = sleepDur(sl);
@@ -4226,6 +4526,7 @@ function renderRecord(){
   const p=S.profile, d=S.days[TODAY];
   const meals=[["breakfast","朝食"],["lunch","昼食"],["dinner","夕食"]];
   view.innerHTML = '<div class="fadein">' +
+    svQuizCardHTML() +
     secHTML("SLEEP LOG","昨晩の睡眠") +
     '<div class="card">' +
       '<div style="font-size:11px;color:var(--sub);margin-bottom:12px">睡眠は「いつ・何を・どれだけ食べるか」と深く関わります。わかる範囲で記録しましょう。</div>' +
@@ -4280,7 +4581,8 @@ function renderRecord(){
     '</div>' +
     '<div class="card">' +
       '<div style="font-size:12px;font-weight:700;color:var(--sub);margin-bottom:4px">今日食べた料理の皿数</div>' +
-      '<div style="font-size:11px;color:var(--sub);margin-bottom:10px">1日の合計を記録します。カロリー計算は不要、「何皿食べたか」を数えるだけで大丈夫。食べた量が多かった場合は、その分、カウント数を増やしてください。</div>' +
+      '<div style="font-size:11px;color:var(--sub);margin-bottom:6px">1日の合計を記録します。カロリー計算は不要、「何皿食べたか」を数えるだけで大丈夫。食べた量が多かった場合は、その分、カウント数を増やしてください。</div>' +
+      svDefinitionHTML() +
       Object.keys(d.sv).map(k=>
         '<div class="row"><div>' +
           '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + p.targets[k] + '皿</span></div>' +
@@ -4358,6 +4660,25 @@ function renderRecord(){
   '</div>';
 
   if(!d.sleep) d.sleep={bed:null,wake:null,awak:0};
+  view.querySelectorAll("[data-svq]").forEach(b=> b.addEventListener("click",()=>{
+    const id = Number(b.dataset.svq), pickIdx = Number(b.dataset.svqc);
+    const st = todaysQuizState();
+    if(st.results.some(function(r){ return r.id===id; })) return;   // 二重回答ガード
+    const ok = pickIdx === quizBank()[id].a;
+    st.results.push({ id:id, ok:ok });
+    S.svQuizStats = S.svQuizStats || { asked:0, correct:0 };
+    S.svQuizStats.asked++; if(ok) S.svQuizStats.correct++;
+    S.svQuizHistory = (S.svQuizHistory||[]).concat([id]).slice(-45);
+    svqFeedback = { id:id, pick:pickIdx };
+    save(); renderRecord();
+  }));
+  const svqN = $("svqNext");
+  if(svqN) svqN.addEventListener("click",()=>{ svqFeedback=null; renderRecord(); });
+  const svqR = $("svqRecipe");
+  if(svqR) svqR.addEventListener("click",()=>{
+    recipeSpotlight = svqR.dataset.rname;   // クイズに出たレシピを開いた状態でレシピタブへ
+    svqFeedback = null; checkupMode = false; tab = "recipe"; render();
+  });
   view.querySelectorAll("[data-sleep]").forEach(r=>{
     const commit=()=>{
       const v=hourFromMinutes(r.value);
@@ -4666,6 +4987,21 @@ function renderAbout(){
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">コメントについて</div>' +
       '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の栄養士ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">5つの料理グループとSVの定義</div>' +
+      '<div style="font-size:12px;line-height:1.9;color:var(--ink);margin-bottom:10px">本アプリの「皿数」は、「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)の料理区分と単位「つ(SV=サービング)」に基づいています。1皿=1SVです。</div>' +
+      SV_DEFS.map(function(x){
+        return '<div style="margin-bottom:10px">' +
+          '<div style="font-size:13px;font-weight:700;color:var(--deep)">' + x.k + '</div>' +
+          '<div style="font-size:12px;line-height:1.9;color:var(--ink)">' + x.what + '。1SV(1皿)の基準は<b>' + x.unit + '</b>。</div>' +
+          '<div style="font-size:11px;color:var(--sub);line-height:1.8">例: ' + x.ex + '</div>' +
+        '</div>';
+      }).join("") +
+      '<div style="border-top:1px dashed var(--line);padding-top:10px">' +
+        SV_DEF_NOTES.map(function(t){ return '<div style="font-size:11px;color:var(--sub);line-height:1.9">・' + t + '</div>'; }).join("") +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--sub);margin-top:10px;line-height:1.8">出典: 「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)、フードガイド(仮称)検討会報告書。最新の解説は農林水産省Webサイト「食事バランスガイドについて」で公開されています(本アプリは外部通信を行わないため、リンクは設けていません)。</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">同意の管理</div>' +
@@ -5191,7 +5527,7 @@ function render(){
     ? '<div class="promise-banner"><span class="disp" style="font-weight:700;flex-shrink:0">' + (stale?"継続中の約束":"今週の約束") + '</span><span style="line-height:1.5">' + esc(S.promise) + (stale?'<span style="opacity:.75">（新しい週のラインナップが「計画」に届いています）</span>':"") + '</span></div>' : "";
   ({home:renderHome, record:renderRecord, plan:renderPlan, recipe:renderRecipe, report:renderReport})[tab]();
 }
-document.querySelectorAll("#nav button").forEach(b=> b.addEventListener("click",()=>{checkupMode=false;tab=b.dataset.tab;render();}));
+document.querySelectorAll("#nav button").forEach(b=> b.addEventListener("click",()=>{checkupMode=false;recipeSpotlight=null;tab=b.dataset.tab;render();}));
 function initMascotTail(){
   const tail = document.querySelector(".brand-mascot-tail");
   if(!tail || typeof tail.animate !== "function") return;
