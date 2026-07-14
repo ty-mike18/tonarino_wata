@@ -3511,27 +3511,90 @@ const SVQUIZ = [
 {g:"複合",q:"【難問】冷やし中華(卵・ハム・きゅうり・トマト)は、どう数える？",c:["主食2・主菜1・副菜1","主食1・主菜2・副菜2","主食2・主菜3・副菜0"],a:0,e:"麺で主食2、錦糸卵+ハムで主菜約1、野菜で副菜約1。単品麺の中では例外的にバランスが良い優等生です。"},
 {g:"複合",q:"【難問】ざるそば単品は、どう数える？",c:["主食2のみ","主食2・主菜1","主食1のみ"],a:0,e:"主食2だけで、主菜も副菜もゼロ。ここに温泉卵(主菜1)ととろろ(副菜)を足せる人が、SV感覚の合格者です。"},
 ];
+/* --- レシピ連動問題: 内蔵レシピ全品のSV換算から自動生成 ---
+   ・単一グループのレシピ →「主菜およそ何SV？」の数量問題
+   ・複数グループのレシピ →「どう数える？」の内訳(複合)問題
+   ・料理名を覚える入口にもなり、解説からレシピタブへ飛べる */
+let QUIZ_ALL_CACHE = null;
+function quizBank(){
+  if(QUIZ_ALL_CACHE) return QUIZ_ALL_CACHE;
+  const GORDER = ["主食","副菜","主菜","乳製品","果物"];
+  const fmt = function(v){ return String(v); };
+  const comboStr = function(sv){ return GORDER.filter(function(g){return sv[g]>0;}).map(function(g){return g+fmt(sv[g]);}).join("・"); };
+  const gen = [];
+  RECIPES.forEach(function(r){
+    const keys = GORDER.filter(function(g){ return r.v[g]>0; });
+    if(!keys.length) return;
+    const seed = stableHash("rq|" + r.n);
+    if(keys.length===1){
+      const g = keys[0], t = r.v[g];
+      const cands = [t-1, t-0.5, t+0.5, t+1, t+1.5].filter(function(x){ return x>=0.5 && x!==t; });
+      const d1 = cands[seed % cands.length];
+      const rest = cands.filter(function(x){ return x!==d1; });
+      const d2 = rest[(seed>>>4) % rest.length];
+      const opts = [t,d1,d2].sort(function(a,b){return a-b;}).map(function(x){ return fmt(x)+"SV"; });
+      gen.push({ g:g, rn:r.n,
+        q:"レシピ問題:『" + r.n + "』(1人分)は、" + g + "およそ何SV？",
+        c:opts, a:opts.indexOf(fmt(t)+"SV"),
+        e:"『" + r.n + "』のSV換算は " + comboStr(r.v) + "(約" + r.k + "kcal)。内蔵レシピ全品にSVがついているので、迷ったらレシピで答え合わせできます。" });
+    } else {
+      const correct = comboStr(r.v);
+      const mk = function(delta, ki){
+        const sv = {}; keys.forEach(function(g){ sv[g]=r.v[g]; });
+        const g = keys[ki % keys.length];
+        sv[g] = Math.max(0.5, sv[g] + delta);
+        return comboStr(sv);
+      };
+      const perturbs = [];
+      for(let ki=0; ki<keys.length; ki++){ [1,-0.5,0.5,-1,1.5].forEach(function(dl){ perturbs.push([dl,ki]); }); }
+      const uniq = [];
+      for(let i=0; i<perturbs.length && uniq.length<2; i++){
+        const idx = (seed + i*7) % perturbs.length;
+        const s = mk(perturbs[idx][0], perturbs[idx][1]);
+        if(s!==correct && uniq.indexOf(s)<0) uniq.push(s);
+      }
+      const opts = [correct, uniq[0], uniq[1]];
+      const ord = seed % 3;
+      const arranged = [opts[ord], opts[(ord+1)%3], opts[(ord+2)%3]];
+      gen.push({ g:"複合", rn:r.n,
+        q:"レシピ問題:『" + r.n + "』(1人分)は、どう数える？",
+        c:arranged, a:arranged.indexOf(correct),
+        e:"『" + r.n + "』のSV換算は " + correct + "(約" + r.k + "kcal)。複合的な料理はグループごとに分解して数えるのがコツです。" });
+    }
+  });
+  QUIZ_ALL_CACHE = SVQUIZ.concat(gen);
+  return QUIZ_ALL_CACHE;
+}
 /* 今日の3問を決める(日替わり・直近45問は再出題しない・グループを順繰りに)
-   6グループ(5料理グループ+複合の難問)を1日3つずつ、2日で一巡する */
+   6グループ(5料理グループ+複合の難問)を1日3つずつ、2日で一巡する。
+   各枠は「基本問題」と「レシピ問題」を日替わりで半々に混ぜる */
 function pickTodaysQuizIds(){
+  const bank = quizBank();
   const groups = ["主食","副菜","主菜","乳製品","果物","複合"];
   const recent = S.svQuizHistory || [];
   const ids = [];
   for(let k=0;k<3;k++){
     const g = groups[(daySeed*3 + k) % 6];
-    let pool = [];
-    for(let i=0;i<SVQUIZ.length;i++){
-      if(SVQUIZ[i].g===g && recent.indexOf(i)<0 && ids.indexOf(i)<0) pool.push(i);
-    }
+    const wantRecipe = stableHash(TODAY + "|svqsrc|" + g + "|" + k) % 2 === 1;
+    const collect = function(rq){
+      const pool = [];
+      for(let i=0;i<bank.length;i++){
+        if(bank[i].g===g && recent.indexOf(i)<0 && ids.indexOf(i)<0 && (!!bank[i].rn)===rq) pool.push(i);
+      }
+      return pool;
+    };
+    let pool = collect(wantRecipe);
+    if(!pool.length) pool = collect(!wantRecipe);
     if(!pool.length){
-      for(let i=0;i<SVQUIZ.length;i++){ if(SVQUIZ[i].g===g && ids.indexOf(i)<0) pool.push(i); }
+      for(let i=0;i<bank.length;i++){ if(bank[i].g===g && ids.indexOf(i)<0) pool.push(i); }
     }
     ids.push(pool[stableHash(TODAY + "|svq|" + g + "|" + k) % pool.length]);
   }
   return ids;
 }
 function todaysQuizState(){
-  if(!S.svQuiz || S.svQuiz.date!==TODAY || !Array.isArray(S.svQuiz.ids)){
+  const bad = S.svQuiz && Array.isArray(S.svQuiz.ids) && S.svQuiz.ids.some(function(i){ return !quizBank()[i]; });
+  if(!S.svQuiz || S.svQuiz.date!==TODAY || !Array.isArray(S.svQuiz.ids) || bad){
     S.svQuiz = { date:TODAY, ids: pickTodaysQuizIds(), results: [] };
     save();
   }
@@ -3545,13 +3608,14 @@ function svQuizCardHTML(){
   const rate = stats.asked >= 5 ? Math.round(stats.correct/stats.asked*100) : null;
   let inner;
   if(svqFeedback){
-    const q = SVQUIZ[svqFeedback.id];
+    const q = quizBank()[svqFeedback.id];
     const okNow = svqFeedback.pick === q.a;
     inner =
       '<div style="font-size:13px;font-weight:700;line-height:1.8">' + esc(q.q) + '</div>' +
       '<div style="margin:8px 0 6px;font-size:15px;font-weight:900;color:' + (okNow ? 'var(--green)' : 'var(--ume)') + '">' +
         (okNow ? '○ 正解！' : '× おしい！ 正解は「' + esc(q.c[q.a]) + '」') + '</div>' +
       '<div style="font-size:12px;line-height:1.9;color:var(--ink);background:var(--pale);border-radius:10px;padding:10px 12px">' + esc(q.e) + '</div>' +
+      (q.rn ? '<button class="recipe-go" id="svqRecipe" data-rname="' + esc(q.rn) + '">🍳 このレシピを見てみる</button>' : '') +
       '<button class="btn-main" id="svqNext" style="margin-top:10px;padding:10px;font-size:13px">' +
         (n < st.ids.length ? '次の問題へ（あと' + (st.ids.length - n) + '問）' : '今日のトレーニングを終える') + '</button>';
   } else if(n >= st.ids.length){
@@ -3561,9 +3625,9 @@ function svQuizCardHTML(){
       (rate!=null ? '（通算正答率 ' + rate + '%）' : '') + '。' +
       (ok===st.ids.length ? 'お見事です。この感覚のまま、下の記録もつけていきましょう。' : '間違えたところが、記録がずれやすいところ。明日も少しずつ合わせていきましょう。') + '</div>';
   } else {
-    const q = SVQUIZ[st.ids[n]];
+    const q = quizBank()[st.ids[n]];
     inner =
-      '<div style="font-size:10px;color:var(--sub);font-weight:700">第' + (n+1) + '問／' + st.ids.length + '問　【' + q.g + '】</div>' +
+      '<div style="font-size:10px;color:var(--sub);font-weight:700">第' + (n+1) + '問／' + st.ids.length + '問　【' + q.g + (q.rn?'・レシピ連動':'') + '】</div>' +
       '<div style="font-size:13px;font-weight:700;line-height:1.8;margin:6px 0 10px">' + esc(q.q) + '</div>' +
       q.c.map(function(c,ci){
         return '<button class="opt" data-svq="' + st.ids[n] + '" data-svqc="' + ci + '">' + esc(c) + '</button>';
@@ -3571,7 +3635,7 @@ function svQuizCardHTML(){
   }
   return secHTML("SV TRAINING","SVトレーニング") +
     '<div class="card" style="border-color:var(--green)">' +
-      '<div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">記録の精度は「1SVの目測」で決まります。毎日3問、感覚合わせのクイズです。</div>' +
+      '<div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">記録の精度は「1SVの目測」で決まります。基本問題と内蔵レシピ全品から、毎日3問の感覚合わせ。</div>' +
       inner +
     '</div>';
 }
@@ -3686,6 +3750,7 @@ function recipeCardHTML(r, open){
     '</div></details>';
 }
 let recipeFilter = { tag:null, star:null };
+let recipeSpotlight = null;   // SVクイズから飛んできたときに開いて見せるレシピ名
 function renderRecipe(){
   const p = S.profile, d = S.days[TODAY];
   const today = todaysRecipePicks(p, d);
@@ -3706,6 +3771,11 @@ function renderRecipe(){
   RECIPES.forEach(function(r){ r.t.forEach(function(t){ tagCounts[t]=(tagCounts[t]||0)+1; }); });
   const tagOrder = ["副菜","主菜","主食","乳製品","果物","魚","肉","卵","大豆","海藻","いも","朝食","夜遅め","汁物","間食","減塩","多様性"];
   view.innerHTML = '<div class="fadein">' +
+    (recipeSpotlight ? (function(){
+      const r = RECIPES.find(function(x){ return x.n===recipeSpotlight; });
+      if(!r) return "";
+      return secHTML("FROM SV TRAINING","クイズに出たレシピ") + recipeCardHTML(r, true);
+    })() : "") +
     secHTML("TODAY'S RECIPES","今日のおすすめレシピ") +
     '<div class="card" style="background:var(--pale);border-color:var(--green)">' +
       '<div style="font-size:13px;line-height:1.9;color:var(--ink)">' + esc(today.need.reason) + '</div>' +
@@ -4594,7 +4664,7 @@ function renderRecord(){
     const id = Number(b.dataset.svq), pickIdx = Number(b.dataset.svqc);
     const st = todaysQuizState();
     if(st.results.some(function(r){ return r.id===id; })) return;   // 二重回答ガード
-    const ok = pickIdx === SVQUIZ[id].a;
+    const ok = pickIdx === quizBank()[id].a;
     st.results.push({ id:id, ok:ok });
     S.svQuizStats = S.svQuizStats || { asked:0, correct:0 };
     S.svQuizStats.asked++; if(ok) S.svQuizStats.correct++;
@@ -4604,6 +4674,11 @@ function renderRecord(){
   }));
   const svqN = $("svqNext");
   if(svqN) svqN.addEventListener("click",()=>{ svqFeedback=null; renderRecord(); });
+  const svqR = $("svqRecipe");
+  if(svqR) svqR.addEventListener("click",()=>{
+    recipeSpotlight = svqR.dataset.rname;   // クイズに出たレシピを開いた状態でレシピタブへ
+    svqFeedback = null; checkupMode = false; tab = "recipe"; render();
+  });
   view.querySelectorAll("[data-sleep]").forEach(r=>{
     const commit=()=>{
       const v=hourFromMinutes(r.value);
@@ -5452,7 +5527,7 @@ function render(){
     ? '<div class="promise-banner"><span class="disp" style="font-weight:700;flex-shrink:0">' + (stale?"継続中の約束":"今週の約束") + '</span><span style="line-height:1.5">' + esc(S.promise) + (stale?'<span style="opacity:.75">（新しい週のラインナップが「計画」に届いています）</span>':"") + '</span></div>' : "";
   ({home:renderHome, record:renderRecord, plan:renderPlan, recipe:renderRecipe, report:renderReport})[tab]();
 }
-document.querySelectorAll("#nav button").forEach(b=> b.addEventListener("click",()=>{checkupMode=false;tab=b.dataset.tab;render();}));
+document.querySelectorAll("#nav button").forEach(b=> b.addEventListener("click",()=>{checkupMode=false;recipeSpotlight=null;tab=b.dataset.tab;render();}));
 function initMascotTail(){
   const tail = document.querySelector(".brand-mascot-tail");
   if(!tail || typeof tail.animate !== "function") return;
