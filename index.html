@@ -4403,6 +4403,48 @@ const SV_INFO = {
   "乳製品":"牛乳コップ半分・ヨーグルト1個など（=1）",
   "果物":"みかん1個・りんご半分など（=1）",
 };
+/* --- 5つの料理グループの厳密な定義 ---
+   「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)および
+   フードガイド(仮称)検討会報告書に基づく。1SV=1つ(サービング)。
+   本アプリの「皿」はこの「つ(SV)」と同義。 */
+const SV_DEFS = [
+  { k:"主食", what:"ごはん、パン、麺・パスタなどを主材料とする料理",
+    unit:"主材料に由来する炭水化物 約40g", ex:"ごはん小盛り1杯・おにぎり1個・食パン1枚=1SV／うどん・そば・パスタ1人前=2SV" },
+  { k:"副菜", what:"野菜、いも、豆類(大豆を除く)、きのこ、海藻などを主材料とする料理",
+    unit:"主材料の重量 約70g", ex:"野菜の小鉢1皿=1SV／野菜炒め・野菜の煮物(中鉢)=2SV" },
+  { k:"主菜", what:"肉、魚、卵、大豆・大豆製品などを主材料とする料理",
+    unit:"主材料に由来するたんぱく質 約6g", ex:"卵1個・納豆1パック・豆腐1/3丁=1SV／魚1切れ=2SV／肉料理1人前=3SV" },
+  { k:"乳製品", what:"牛乳、ヨーグルト、チーズなどの牛乳・乳製品",
+    unit:"カルシウム 約100mg", ex:"牛乳100ml・ヨーグルト1個・チーズ1枚=1SV／牛乳コップ1杯(200ml)=2SV" },
+  { k:"果物", what:"りんご、みかんなどの果実、およびすいか・いちごなどの果実的な野菜",
+    unit:"主材料の重量 約100g", ex:"みかん1個・バナナ1本・りんご半分=1SV" },
+];
+const SV_DEF_NOTES = [
+  "菓子・嗜好飲料は5つのグループには含めません(「楽しく適度に」の扱い。本アプリでは間食として別に記録します)。",
+  "油脂・調味料は数えません(料理のエネルギーには含まれますが、SVの単位にはなりません)。",
+  "水・お茶は食事に欠かせないものとして扱い、SVには数えません。",
+  "カレーライスや丼もののような複合的な料理は、主食・副菜・主菜などに分解してそれぞれ数えます。",
+  "豆類の注意: 大豆・大豆製品(豆腐・納豆など)は主菜、大豆以外の豆といんげん・枝豆などは副菜です。",
+];
+function svDefinitionHTML(){
+  return '<details style="margin:2px 0 10px">' +
+    '<summary style="cursor:pointer;font-size:11px;color:var(--green);font-weight:700;list-style:none">▸ 5つの料理グループの正式な定義(食事バランスガイド)を見る</summary>' +
+    '<div style="margin-top:8px;background:var(--pale);border-radius:10px;padding:10px 12px">' +
+      '<div style="font-size:10px;color:var(--sub);line-height:1.8;margin-bottom:8px">本アプリの「1皿」は、食事バランスガイド(厚生労働省・農林水産省決定、2005年)の「1つ(SV=サービング)」と同じ数え方です。各グループの正式な定義は次のとおりです。</div>' +
+      SV_DEFS.map(function(x){
+        return '<div style="margin-bottom:8px">' +
+          '<div style="font-size:12px;font-weight:700;color:var(--deep)">' + x.k + '<span style="font-weight:400;color:var(--sub);font-size:10px">　1SV = ' + x.unit + '</span></div>' +
+          '<div style="font-size:11px;color:var(--ink);line-height:1.8">' + x.what + '。</div>' +
+          '<div style="font-size:10px;color:var(--sub);line-height:1.7">例: ' + x.ex + '</div>' +
+        '</div>';
+      }).join("") +
+      '<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:2px">' +
+        SV_DEF_NOTES.map(function(t){ return '<div style="font-size:10px;color:var(--sub);line-height:1.8">・' + t + '</div>'; }).join("") +
+      '</div>' +
+      '<div style="font-size:9px;color:var(--sub);margin-top:8px;line-height:1.7">出典: 「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)、フードガイド(仮称)検討会報告書。詳細は農林水産省Webサイト「食事バランスガイドについて」を参照してください(本アプリから外部への通信は行いません)。</div>' +
+    '</div>' +
+  '</details>';
+}
 function sleepDurationText(sl){
   const hasBoth = sl && sl.bed!=null && sl.wake!=null;
   const dur = sleepDur(sl);
@@ -4469,7 +4511,8 @@ function renderRecord(){
     '</div>' +
     '<div class="card">' +
       '<div style="font-size:12px;font-weight:700;color:var(--sub);margin-bottom:4px">今日食べた料理の皿数</div>' +
-      '<div style="font-size:11px;color:var(--sub);margin-bottom:10px">1日の合計を記録します。カロリー計算は不要、「何皿食べたか」を数えるだけで大丈夫。食べた量が多かった場合は、その分、カウント数を増やしてください。</div>' +
+      '<div style="font-size:11px;color:var(--sub);margin-bottom:6px">1日の合計を記録します。カロリー計算は不要、「何皿食べたか」を数えるだけで大丈夫。食べた量が多かった場合は、その分、カウント数を増やしてください。</div>' +
+      svDefinitionHTML() +
       Object.keys(d.sv).map(k=>
         '<div class="row"><div>' +
           '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + p.targets[k] + '皿</span></div>' +
@@ -4869,6 +4912,21 @@ function renderAbout(){
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">コメントについて</div>' +
       '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の栄養士ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">5つの料理グループとSVの定義</div>' +
+      '<div style="font-size:12px;line-height:1.9;color:var(--ink);margin-bottom:10px">本アプリの「皿数」は、「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)の料理区分と単位「つ(SV=サービング)」に基づいています。1皿=1SVです。</div>' +
+      SV_DEFS.map(function(x){
+        return '<div style="margin-bottom:10px">' +
+          '<div style="font-size:13px;font-weight:700;color:var(--deep)">' + x.k + '</div>' +
+          '<div style="font-size:12px;line-height:1.9;color:var(--ink)">' + x.what + '。1SV(1皿)の基準は<b>' + x.unit + '</b>。</div>' +
+          '<div style="font-size:11px;color:var(--sub);line-height:1.8">例: ' + x.ex + '</div>' +
+        '</div>';
+      }).join("") +
+      '<div style="border-top:1px dashed var(--line);padding-top:10px">' +
+        SV_DEF_NOTES.map(function(t){ return '<div style="font-size:11px;color:var(--sub);line-height:1.9">・' + t + '</div>'; }).join("") +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--sub);margin-top:10px;line-height:1.8">出典: 「食事バランスガイド」(厚生労働省・農林水産省決定、2005年)、フードガイド(仮称)検討会報告書。最新の解説は農林水産省Webサイト「食事バランスガイドについて」で公開されています(本アプリは外部通信を行わないため、リンクは設けていません)。</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">同意の管理</div>' +
