@@ -1,0 +1,22 @@
+{
+  "appId": "jp.toyo.tonarino",
+  "appName": "となりの栄養士",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#F3F7F4",
+    "limitsNavigationsToAppBoundDomains": true,
+    "scrollEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 900,
+      "launchAutoHide": true,
+      "backgroundColor": "#F3F7F4",
+      "showSpinner": false
+    },
+    "LocalNotifications": {
+      "iconColor": "#1C4A3B"
+    }
+  }
+}

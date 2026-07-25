@@ -1,0 +1,30 @@
+{
+  "name": "tonarino-eiyoshi-ios",
+  "version": "3.31.0",
+  "private": true,
+  "description": "となりの栄養士 iOS アプリ (Capacitor による WebView パッケージング)",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-www.mjs",
+    "test": "node test/bridge.test.mjs",
+    "ios:add": "npm run build && npx cap add ios && npx cap sync ios",
+    "ios:sync": "npm run build && npx cap sync ios",
+    "ios:open": "npx cap open ios",
+    "assets": "python3 scripts/make-assets.py"
+  },
+  "dependencies": {
+    "@capawesome/capacitor-badge": "^8.0.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.4.2",
+    "@capacitor/local-notifications": "^8.2.1",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.2"
+  }
+}

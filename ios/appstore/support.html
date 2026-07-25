@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<!--
+  となりの栄養士 — サポートページ
+
+  ★公開前に必ず2か所を書き換えてください★
+    1. 「〇〇〇〇」    → 提供者名（あなたの氏名または法人名）
+    2. 「your@example.com」 → 連絡先メールアドレス（2か所あります）
+
+  書き換えたらリポジトリ直下に support.html としてコピーし、push してください。
+  公開URL: https://ty-mike18.github.io/tonarino_wata/support.html
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>サポート｜となりの栄養士</title>
+<style>
+:root{--bg:#F3F7F4;--ink:#26342E;--sub:#5E6F67;--green:#2C6B57;--deep:#1C4A3B;--pale:#E3EFE8;--line:#D8E2DC;--card:#FFF;--yuzu:#E5A93C}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);line-height:1.9;-webkit-font-smoothing:antialiased}
+.wrap{max-width:720px;margin:0 auto;padding:32px 20px 80px}
+header{border-bottom:2px solid var(--deep);padding-bottom:16px;margin-bottom:28px}
+h1{font-size:24px;color:var(--deep);font-weight:900}
+.app{font-size:12px;letter-spacing:.14em;color:var(--green);font-weight:700;margin-bottom:6px}
+h2{font-size:17px;color:var(--deep);margin:34px 0 12px;padding-left:12px;border-left:4px solid var(--green)}
+p{font-size:14px;margin-bottom:12px}
+ul,ol{margin:0 0 14px 22px;font-size:14px}
+li{margin-bottom:6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:16px 0}
+.contact{background:var(--pale);border-color:var(--green)}
+details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0;margin-bottom:10px;overflow:hidden}
+summary{padding:14px 16px;font-size:14px;font-weight:700;cursor:pointer;color:var(--deep);list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"Q ";color:var(--yuzu);font-weight:900}
+details[open] summary{border-bottom:1px solid var(--line)}
+details .body{padding:14px 16px;font-size:14px}
+details .body p:last-child{margin-bottom:0}
+footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--sub)}
+a{color:var(--green)}
+.warn{border-left:4px solid var(--yuzu);background:#FFFDF6;padding:14px 16px;border-radius:0 10px 10px 0;font-size:14px;margin:16px 0}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#141A17;--ink:#E7EFEA;--sub:#9DB0A6;--line:#2C3A33;--card:#1C2521;--pale:#22322B;--deep:#8FCBB2;--green:#6FB397}
+  .warn{background:#221D10}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="app">SUPPORT</div>
+  <h1>となりの栄養士 サポート</h1>
+</header>
+
+<p>ご不明な点は、まず下の「よくあるご質問」をご覧ください。解決しない場合は、ページ下部の窓口までご連絡ください。</p>
+
+<h2>よくあるご質問</h2>
+
+<details>
+  <summary>記録したデータはどこに保存されますか？</summary>
+  <div class="body">
+    <p>お使いのiPhoneの中だけに保存されます。外部のサーバーへ送信されることはありません。
+    アカウント登録やログインも不要です。詳しくは<a href="./privacy.html">プライバシーポリシー</a>をご覧ください。</p>
+  </div>
+</details>
+
+<details>
+  <summary>機種変更をするとき、記録を引き継げますか？</summary>
+  <div class="body">
+    <p>「経過」タブの<strong>「CSVを書き出す」</strong>から記録をファイルとして保存し、
+    新しい端末で<strong>「CSVから復元する」</strong>を使って読み込んでください。</p>
+    <p>なお、プロフィールと週の約束の履歴はCSVに含まれないため、新しい端末では初回アセスメントの入力が必要になります。</p>
+  </div>
+</details>
+
+<details>
+  <summary>アプリを削除したら記録は消えますか？</summary>
+  <div class="body">
+    <p>はい、消えます。復元できませんので、削除の前に必ずCSVを書き出して保存してください。</p>
+    <p>アプリを削除しない限り、App Store からの更新では記録は消えません。</p>
+  </div>
+</details>
+
+<details>
+  <summary>リマインダーの通知が届きません</summary>
+  <div class="body">
+    <p>次の順に確認してください。</p>
+    <ol>
+      <li>「記録」タブのリマインダーが<strong>オン</strong>になっているか</li>
+      <li>iPhoneの<strong>設定 → となりの栄養士 → 通知</strong> が許可になっているか</li>
+      <li>設定した時刻が、これから来る時刻になっているか（過ぎた時刻には通知しません）</li>
+      <li>その日にすでに記録を入力していないか（<strong>記録できた日は通知しません</strong>）</li>
+      <li>「集中モード」「おやすみモード」が有効になっていないか</li>
+    </ol>
+  </div>
+</details>
+
+<details>
+  <summary>インターネットに接続していなくても使えますか？</summary>
+  <div class="body">
+    <p>はい。すべての機能が機内モードのままご利用いただけます。
+    レシピも画像もアプリの中に入っているため、通信は一切発生しません。</p>
+  </div>
+</details>
+
+<details>
+  <summary>「つ（SV）」とは何ですか？</summary>
+  <div class="body">
+    <p>「食事バランスガイド」（厚生労働省・農林水産省決定、2005年）で使われる、料理の数え方の単位です。
+    主食・副菜・主菜・牛乳/乳製品・果物の5つのグループごとに、1日にとりたいおおよその量を「つ」で数えます。</p>
+    <p>アプリの「記録」タブにある皿数の入力欄と、「案内」タブに、各グループの定義と1SVの基準を掲載しています。</p>
+  </div>
+</details>
+
+<details>
+  <summary>体重や目標を変更したいのですが</summary>
+  <div class="body">
+    <p>週に一度、ホーム画面に「週に一度の定期チェック」のカードが表示されます。
+    そこから体重・目標・お気持ちを見直すと、目標エネルギーと皿数が今の体に合わせて計算し直されます。</p>
+  </div>
+</details>
+
+<details>
+  <summary>レシピはどこから来ているのですか？</summary>
+  <div class="body">
+    <p>すべて本アプリのために書き起こしたオリジナルです（921品）。
+    外部サイトからの転載やリンクはありません。</p>
+  </div>
+</details>
+
+<details>
+  <summary>ダイエットや治療の目的で使えますか？</summary>
+  <div class="body">
+    <p>本アプリは<strong>健康な成人の方</strong>が生活を記録し、ご自身でふりかえるためのものです。
+    疾病の診断・治療・予防を目的としたものではありません。</p>
+    <p>治療中の方、食事制限を受けている方、妊娠中・授乳中の方は、
+    かかりつけの医師・管理栄養士の指示を優先してください。</p>
+  </div>
+</details>
+
+<div class="warn">
+  <strong>体調に不安があるときは</strong><br>
+  本アプリの表示内容にかかわらず、医療機関にご相談ください。
+  本アプリが表示するコメントは一般的な情報提供であり、個別の医学的助言ではありません。
+</div>
+
+<h2>動作環境</h2>
+<ul>
+  <li>iOS 15.0 以降の iPhone</li>
+  <li>インターネット接続は不要です</li>
+</ul>
+
+<h2>お問い合わせ</h2>
+<div class="card contact">
+  <p>ご質問・不具合のご報告は、次の宛先までお願いします。</p>
+  <p style="margin-bottom:0">
+    提供者: <strong>〇〇〇〇</strong><br>
+    メール: <a href="mailto:your@example.com">your@example.com</a><br>
+    <span style="font-size:12px;color:var(--sub)">※ 返信までに数日いただくことがあります。</span>
+  </p>
+</div>
+<p style="font-size:13px;color:var(--sub)">不具合のご報告の際は、<strong>iPhoneの機種名</strong>・<strong>iOSのバージョン</strong>・<strong>アプリのバージョン</strong>・<strong>どの操作で起きたか</strong>をお知らせいただけると、原因を特定しやすくなります。</p>
+
+<footer>
+  <a href="./">となりの栄養士</a>　|　<a href="./privacy.html">プライバシーポリシー</a>
+</footer>
+
+</div>
+</body>
+</html>

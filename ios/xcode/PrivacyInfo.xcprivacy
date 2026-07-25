@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  となりの栄養士 — プライバシーマニフェスト
+
+  2024年春から、App Store に出すアプリには「プライバシーマニフェスト」の
+  同梱が求められています。ここでは次の3つを宣言しています。
+
+   1. NSPrivacyTracking = false
+      他社サービスとデータを突き合わせる「トラッキング」は一切しない
+   2. NSPrivacyCollectedDataTypes = 空
+      利用者のデータを外部に集めていない（記録は端末内だけに保存される）
+   3. NSPrivacyAccessedAPITypes
+      Apple が「使う理由の申告」を求めている API の申告
+        - UserDefaults (CA92.1) : アプリ自身の設定の保存にのみ使用
+        - File timestamp (C617.1): 自分のアプリが作ったファイルの取り扱いにのみ使用
+
+  Xcode で App ターゲットに追加してください（手順はマニュアル STEP 7）。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

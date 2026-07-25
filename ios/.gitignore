@@ -1,0 +1,15 @@
+# Capacitor が自動生成するもの（コミット不要）
+node_modules/
+www/
+
+# Xcode プロジェクト（npx cap add ios で生成される）
+# 生成物だがビルド設定を手で変えるため、App/ 自体はコミットしてよい。
+# 中の中間生成物だけ除外する。
+App/Pods/
+App/build/
+App/App.xcworkspace/xcuserdata/
+App/App.xcodeproj/xcuserdata/
+App/Podfile.lock
+DerivedData/
+*.xcuserstate
+.DS_Store
