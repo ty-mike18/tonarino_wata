@@ -5220,6 +5220,80 @@ function weeklyTrendHTML(){
 }
 
 /* --- 経過（体重） --- */
+/* ============================================================
+   睡眠アクトグラム(過去30日・ダブルプロット)
+   ・縦軸=日付(上から古い順に30日)、横軸=48時間(左半分=その日、
+     右半分=翌日)。時間生物学で標準の「ダブルプロット」形式で、
+     夜またぎの睡眠が途切れず、就寝リズムの前後へのずれが読める。
+   ・黒=睡眠、白=覚醒、薄いグレー=記録のない日。
+   ・データが30日に満たなくても、30日の枠を常に表示する。
+   ============================================================ */
+function actogramRows(){
+  const parts = TODAY.split("-").map(Number);
+  const keyOf = function(off){ return dateKey(new Date(parts[0], parts[1]-1, parts[2]+off)); };
+  /* normSleepWindow の時間軸は「記録日の前日0時」を0とする連続時間。
+     つまり 24 = 記録日の0時。1つの睡眠記録(前夜就寝〜当日起床)は、
+     前日の夜(0〜24)と当日の朝(24〜48)にまたがる。 */
+  const clip = function(a,b){ return [Math.max(0,Math.min(24,a)), Math.max(0,Math.min(24,b))]; };
+  const winOf = {};
+  for(let off=-30; off<=1; off++){
+    const d = S.days[keyOf(off)];
+    if(d && d.sleep){ const w = normSleepWindow(d.sleep); if(w) winOf[off] = w; }
+  }
+  const rows = [];
+  for(let off=-29; off<=0; off++){
+    const black = [];
+    const wMorning = winOf[off];    // その日の朝に起きた睡眠 → その日の 0時〜起床
+    const wNight = winOf[off+1];    // 翌朝に起きた睡眠 → その日の 就寝〜24時
+    if(wMorning && wMorning.wake > 24) black.push(clip(wMorning.bed - 24, wMorning.wake - 24));
+    if(wNight && wNight.bed < 24) black.push(clip(wNight.bed, wNight.wake));
+    const dt = new Date(parts[0], parts[1]-1, parts[2]+off);
+    rows.push({ off:off, label:(dt.getMonth()+1)+"/"+dt.getDate(),
+      known: !!(wMorning || wNight), black:black });
+  }
+  return rows;
+}
+function actogramHTML(rows){
+  const W = 340, left = 36, right = 8, top = 18, rh = 6.5, bottom = 6;
+  const plotW = W - left - right;
+  const x = function(h){ return left + plotW * h / 48; };
+  const H = top + rows.length*rh + bottom;
+  const plotH = rows.length*rh;
+  /* 重ね順を分けて組む: 背景 → 時刻グリッド → 日付境界線 → 睡眠バー → 枠・ラベル。
+     バーを最後に置くことで、23時就寝のような短い帯が線に隠れない。 */
+  let bg = '', grid = '', bars = '', labels = '';
+  [0,6,12,18,24,30,36,42,48].forEach(function(h){
+    const lab = h===48 ? "24" : String(h % 24);
+    labels += '<text x="' + x(h).toFixed(1) + '" y="' + (top-6) + '" font-size="7.5" fill="#9AA09B" text-anchor="middle">' + lab + '</text>';
+    grid += '<line x1="' + x(h).toFixed(1) + '" y1="' + top + '" x2="' + x(h).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#E4E4DE" stroke-width="0.6"/>';
+  });
+  // 日付の変わり目(0時)
+  grid += '<line x1="' + x(24).toFixed(1) + '" y1="' + top + '" x2="' + x(24).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#B9C0BA" stroke-width="1" stroke-dasharray="3 2"/>';
+  const cell = function(hx, y, w, fill){
+    return '<rect x="' + hx.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + (rh-1).toFixed(1) + '" fill="' + fill + '"/>';
+  };
+  rows.forEach(function(r, i){
+    const y = top + i*rh;
+    const nextRow = rows[i+1] || null;   // 右半分 = 翌日(最終行の右は未来なので記録なし扱い)
+    // 背景: 白=覚醒(記録あり) / 薄グレー=記録のない日
+    bg += cell(x(0), y, plotW/2, r.known ? '#FFFFFF' : '#EFEFE9');
+    bg += cell(x(24), y, plotW/2, (nextRow && nextRow.known) ? '#FFFFFF' : '#EFEFE9');
+    // 睡眠バー: 左半分=その日、右半分=翌日を+24hシフト
+    const put = function(seg, shift){
+      if(seg[1] > seg[0]) bars += cell(x(shift+seg[0]), y, x(shift+seg[1])-x(shift+seg[0]), '#26261F');
+    };
+    r.black.forEach(function(seg){ put(seg, 0); });
+    if(nextRow) nextRow.black.forEach(function(seg){ put(seg, 24); });
+    // 日付ラベル(5行ごと+最終行=今日)
+    if(i % 5 === 0 || i === rows.length-1){
+      const isToday = i === rows.length-1;
+      labels += '<text x="' + (left-4) + '" y="' + (y + rh - 1.5).toFixed(1) + '" font-size="7.5" fill="' + (isToday ? 'var(--green)' : '#9AA09B') + '" font-weight="' + (isToday ? '700' : '400') + '" text-anchor="end">' + r.label + (isToday ? '●' : '') + '</text>';
+    }
+  });
+  const frame = '<rect x="' + x(0).toFixed(1) + '" y="' + top + '" width="' + plotW.toFixed(1) + '" height="' + plotH.toFixed(1) + '" fill="none" stroke="var(--line)" stroke-width="1"/>';
+  return '<svg class="actogram-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block" role="img" aria-label="過去30日の睡眠アクトグラム">' +
+    bg + grid + bars + frame + labels + '</svg>';
+}
 function renderReport(){
   const curWeek = weekWeightSeries(0), prevWeek = weekWeightSeries(1);
   const hasWeekData = curWeek.some(x=>x.w!=null) || prevWeek.some(x=>x.w!=null);
@@ -5249,6 +5323,24 @@ function renderReport(){
         '</div>' +
         (c.sjl!=null ? '<div class="hint" style="margin-top:10px">平日と休日の睡眠中心のズレ（寝だめ度）：約' + Math.abs(c.sjl).toFixed(1) + '時間。' + (Math.abs(c.sjl)<1?"よく揃っています。":"休日の起床を平日に近づけると整います。") + '</div>' : '') +
         '<div class="hint">簡易SRI（睡眠規則性スコア）は、毎日の就寝・起床時刻がどれだけ揃っているかを示すセルフチェック用の近似指標です。85以上が理想です。成人の睡眠は6時間以上が目安（健康づくりのための睡眠ガイド2023）。</div>' +
+      '</div>';
+    })() +
+    secHTML("ACTOGRAM","睡眠リズム（過去30日）") +
+    (function(){
+      const rows = actogramRows();
+      const nRec = rows.filter(function(r){ return r.known; }).length;
+      return '<div class="card">' +
+        '<div style="display:flex;align-items:center;gap:12px;font-size:10px;color:var(--sub);margin-bottom:6px">' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:#26261F;vertical-align:-1px;margin-right:4px"></span>睡眠</span>' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:#fff;border:1px solid var(--line);vertical-align:-1px;margin-right:4px"></span>覚醒</span>' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:#EFEFE9;vertical-align:-1px;margin-right:4px"></span>記録なし</span>' +
+        '</div>' +
+        actogramHTML(rows) +
+        '<div class="hint" style="margin-top:8px">縦は日付（上が30日前、下が今日）、横は48時間の<b>ダブルプロット</b>です。左半分がその日の0〜24時、右半分が翌日の0〜24時で、同じ夜の睡眠が途切れずに見えます。中央の点線が日付の変わり目（0時）。' +
+          '就寝・起床の時刻が毎日そろっていれば、黒い帯がまっすぐ縦に並びます。帯が右へ流れていくときは夜型化、階段状に乱れるときはリズムの不安定さのサインです。' +
+          (nRec===0 ? '<br>まだ睡眠の記録がありません。「記録」タブで昨晩の就寝・起床を入力すると、この図に現れます。'
+                    : '<br>この30日のうち、睡眠を記録できた日は' + nRec + '日です。記録のない日は薄いグレーで表示しています。') +
+        '</div>' +
       '</div>';
     })() +
     secHTML("VARIETY","食事の多様性") +
