@@ -30,12 +30,10 @@ header{padding:18px 2px 14px}
 .brand-mascot-tail{z-index:1;transform-origin:76% 82%;animation:tail-sway 5.2s ease-in-out infinite;will-change:transform}
 .brand-mascot-body{z-index:2}
 .appname{font-size:23px;font-weight:900;color:var(--deep)}
-.appname small{font-size:10px;font-weight:700;color:var(--green);letter-spacing:.12em;margin-left:8px}
 .tagline{font-size:11px;color:var(--sub);margin-top:2px}
 .today-date{display:inline-block;margin-top:8px;background:var(--deep);color:#fff;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
 .weight-trend-svg text{font-family:"Hiragino Maru Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif}
-.kicker{font-size:10px;letter-spacing:.15em;color:var(--green);font-weight:700}
 .sec-title{font-size:19px;font-weight:700;margin-bottom:10px}
 .label{font-size:12px;font-weight:700;color:var(--sub);margin-bottom:6px;display:block}
 .input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
@@ -148,7 +146,7 @@ nav .lb{font-size:11px;font-weight:700}
         <img class="brand-mascot-layer brand-mascot-body" src="wata-body.png" alt="" aria-hidden="true">
       </span>
       <div>
-        <div class="appname disp">となりの栄養士<small>NUTRITION COMPANION</small></div>
+        <div class="appname disp">となりの栄養士</div>
         <div class="tagline" id="tagline">食生活の記録とふりかえりを、いつでも手のひらに</div>
       </div>
     </div>
@@ -3633,7 +3631,7 @@ function svQuizCardHTML(){
         return '<button class="opt" data-svq="' + st.ids[n] + '" data-svqc="' + ci + '">' + esc(c) + '</button>';
       }).join("");
   }
-  return secHTML("SV TRAINING","SVトレーニング") +
+  return secHTML("SVトレーニング") +
     '<div class="card" style="border-color:var(--green)">' +
       '<div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">記録の精度は「1SVの目測」で決まります。基本問題と内蔵レシピ全品から、毎日3問の感覚合わせ。</div>' +
       inner +
@@ -3774,15 +3772,15 @@ function renderRecipe(){
     (recipeSpotlight ? (function(){
       const r = RECIPES.find(function(x){ return x.n===recipeSpotlight; });
       if(!r) return "";
-      return secHTML("FROM SV TRAINING","クイズに出たレシピ") + recipeCardHTML(r, true);
+      return secHTML("クイズに出たレシピ") + recipeCardHTML(r, true);
     })() : "") +
-    secHTML("TODAY'S RECIPES","今日のおすすめレシピ") +
+    secHTML("今日のおすすめレシピ") +
     '<div class="card" style="background:var(--pale);border-color:var(--green)">' +
       '<div style="font-size:13px;line-height:1.9;color:var(--ink)">' + esc(today.need.reason) + '</div>' +
       '<div style="font-size:10px;color:var(--sub);margin-top:6px">★はそのレシピに必要な手間のレベルです(★1=買うだけ、★2=かんたん、★3=しっかり、★4=こだわり)。今のあなたに合うものから並べています。</div>' +
     '</div>' +
     [1,2,3,4].map(function(lv){ return recipeCardHTML(today.picks[lv], false); }).join("") +
-    secHTML("RECIPE LIST","レシピをさがす") +
+    secHTML("レシピをさがす") +
     '<div class="card" style="padding:12px 14px">' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
         tagOrder.filter(function(t){return tagCounts[t];}).map(function(t){
@@ -3822,8 +3820,9 @@ function noteHTML(n){
   return '<div class="note fadein"><div class="edge" style="background:' + edge + '"></div>' +
     '<div class="body"><div class="t">' + mark + esc(n.title) + '</div><div class="b">' + esc(n.body) + '</div>' + btn + rbtn + '</div></div>';
 }
-function secHTML(kicker, title){
-  return '<div style="margin:6px 0 10px"><div class="kicker">' + kicker + '</div><div class="sec-title disp">' + title + '</div></div>';
+/* 見出しは日本語のみで端的に示す(英語の併記はしない) */
+function secHTML(title){
+  return '<div style="margin:6px 0 10px"><div class="sec-title disp">' + title + '</div></div>';
 }
 
 /* --- 時間栄養学の指標（複数日の食事時刻から算出） ---
@@ -4215,6 +4214,24 @@ function pastWeek(){
   }
   return out;
 }
+/* --- 今週(月曜〜日曜)のバランススコア ---
+   欠測日も枠として残すため、常に7つの要素を返す。
+   グラフ専用。コメント生成が使う pastWeek() とは別物。 */
+function weekScoreSeries(){
+  const parts = TODAY.split("-").map(Number);
+  const idx = dayIndexFromKey(TODAY);
+  const back = (idx + 3) % 7;              // 月曜からの経過日数
+  const out = [];
+  for(let i=0;i<7;i++){
+    const dt = new Date(parts[0], parts[1]-1, parts[2] - back + i);
+    const k = dateKey(dt);
+    const d = S.days[k];
+    const has = !!(d && recorded(d) && S.profile);
+    out.push({ key:k, label:WD[dt.getDay()], isToday:k===TODAY,
+      score: has ? dayScore(d, S.profile.targets) : null });
+  }
+  return out;
+}
 function weightHistory(){
   const out = [];
   Object.keys(S.days).sort().forEach(k=>{
@@ -4246,7 +4263,7 @@ let formError = "";
 function renderOnboarding(){
   const ready = form.age && form.height && form.weight && form.goal && form.stage;
   view.innerHTML = '<div class="fadein">' +
-    secHTML("INITIAL ASSESSMENT","初回アセスメント") +
+    secHTML("初回アセスメント") +
     '<div class="card"><div class="grid2">' +
       '<div class="full"><label class="label">お名前（呼ばれたい名前）</label>' +
         '<input class="input" id="f_name" value="' + esc(form.name) + '" placeholder="例：さとう"></div>' +
@@ -4416,7 +4433,7 @@ function renderHome(){
     '<div class="card score-card">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-end">' +
         '<div>' +
-          '<div style="font-size:10px;letter-spacing:.08em;line-height:1.35;opacity:.7;font-weight:700">TODAY&#39;S DIETARY BALANCE SCORE</div>' +
+          '<div style="font-size:10px;letter-spacing:.08em;line-height:1.35;opacity:.7;font-weight:700">今日の食事バランス得点</div>' +
           '<div class="score-num disp">' + (rec?score:"—") + '<span style="font-size:16px;opacity:.7"> /100</span></div>' +
           (rec?"":'<div style="font-size:11px;opacity:.7">記録するとスコアが表示されます</div>') +
         '</div>' +
@@ -4432,12 +4449,12 @@ function renderHome(){
       (streak>=2?'<div style="margin-top:8px;font-size:11px;opacity:.85;border-top:1px solid rgba(255,255,255,.2);padding-top:8px">'+esc(streakMsg(streak))+'</div>':"") +
     '</div>' +
     (rec?"":'<div class="card" style="background:var(--pale);border-color:var(--green)"><div style="display:flex;gap:10px;align-items:flex-start"><div style="font-size:20px">🎯</div><div><div class="disp" style="font-size:13px;font-weight:700;color:var(--deep);margin-bottom:2px">今日のミニチャレンジ</div><div style="font-size:13px;line-height:1.7;color:var(--ink)">'+esc(todayChallenge())+'</div></div></div></div>') +
-    secHTML("COUNSELING NOTE","今日の栄養士ノート") +
+    secHTML("今日の栄養士ノート") +
     '<div style="font-size:10px;color:var(--sub);margin:-6px 0 8px">※コメントは記録をもとにアプリが自動生成する一般的な情報です</div>' +
     foodNotes.map(noteHTML).join("") +
-    (sleepNotes.length ? secHTML("SLEEP NOTE","睡眠の振り返り") + sleepNotes.map(noteHTML).join("") : (hasSleep?'<div class="card"><div class="empty">睡眠は記録できています。数日分たまると、規則性のコメントも表示されます。</div></div>':'')) +
+    (sleepNotes.length ? secHTML("睡眠の振り返り") + sleepNotes.map(noteHTML).join("") : (hasSleep?'<div class="card"><div class="empty">睡眠は記録できています。数日分たまると、規則性のコメントも表示されます。</div></div>':'')) +
     (rec?"":'<button class="btn-main" id="goRec" style="margin-bottom:14px">今日の食事を記録する</button>') +
-    (next && next.length ? secHTML("TOMORROW'S POINTS","明日のポイント") +
+    (next && next.length ? secHTML("明日のポイント") +
       '<div class="card tomorrow">' +
       next.map(function(tx,i){
         return '<div style="display:flex;gap:12px;align-items:flex-start' + (i>0?';margin-top:12px;border-top:1px dashed #EFD9A0;padding-top:12px':'') + '">' +
@@ -4527,7 +4544,7 @@ function renderRecord(){
   const meals=[["breakfast","朝食"],["lunch","昼食"],["dinner","夕食"]];
   view.innerHTML = '<div class="fadein">' +
     svQuizCardHTML() +
-    secHTML("SLEEP LOG","昨晩の睡眠") +
+    secHTML("昨晩の睡眠") +
     '<div class="card">' +
       '<div style="font-size:11px;color:var(--sub);margin-bottom:12px">睡眠は「いつ・何を・どれだけ食べるか」と深く関わります。わかる範囲で記録しましょう。</div>' +
       (function(){
@@ -4562,7 +4579,7 @@ function renderRecord(){
           '<div id="sleepDurationMsg">' + sleepDurationText(sl) + '</div>';
       })() +
     '</div>' +
-    secHTML("MEAL LOG","今日の食事記録") +
+    secHTML("今日の食事記録") +
     '<div class="card">' +
       '<div style="font-size:12px;font-weight:700;color:var(--sub);margin-bottom:10px">食事の時刻（「何時に食べたか」も大切な情報です）</div>' +
       '<div class="time-grid meal-grid">' +
@@ -4865,7 +4882,7 @@ function renderPlan(){
   if(S.promise && S.promiseWeek===WEEK_IDX) pendingPromiseChoice = null;
   const targetW=(22*Math.pow(p.height/100,2)).toFixed(1);
   view.innerHTML = '<div class="fadein">' +
-    secHTML("ASSESSMENT","あなたのアセスメント結果") +
+    secHTML("あなたのアセスメント結果") +
     '<div class="card">' +
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">' +
         '<div class="stat"><div class="k">BMI</div><div class="v">' + p.bmi.toFixed(1) + '</div><div class="s">' + bmiClass(p.bmi) + '</div></div>' +
@@ -4876,7 +4893,7 @@ function renderPlan(){
         'いまは「<b style="color:var(--deep)">' + STAGES.find(s=>s.id===p.stage).label + '</b>」ですね。あなたの今の気持ちに合わせた声かけをしていきます。無理に行動をうながすことはありませんので、安心してください。' +
       '</div>' +
     '</div>' +
-    secHTML("WEEKLY PROMISE","今週の約束（1つだけ選ぶ）") +
+    secHTML("今週の約束（1つだけ選ぶ）") +
     '<div class="card">' +
       '<div style="font-size:12px;color:var(--sub);margin-bottom:12px;line-height:1.8">' +
         '目標は欲張らないほうが長続きします。「できそう度が10点中7点以上」と感じるものを、1つだけ選んでください。★は変化を起こす難易度の目安で、★1は取り組みやすく、★3は少し挑戦的です。' +
@@ -4949,7 +4966,7 @@ function renderFooter(){
 /* --- 利用同意画面（初回起動時・同意するまで利用不可） --- */
 function renderConsent(){
   view.innerHTML = '<div class="fadein">' +
-    secHTML("BEFORE YOU START","ご利用の前に") +
+    secHTML("ご利用の前に") +
     '<div class="card">' +
       '<div style="font-size:14px;line-height:2;color:var(--ink);margin-bottom:14px">' + esc(CONSENT_TEXT) + '</div>' +
       '<div style="font-size:12px;line-height:1.9;color:var(--sub);border-top:1px dashed var(--line);padding-top:12px;margin-bottom:14px">' +
@@ -4974,7 +4991,7 @@ function renderConsent(){
 /* --- 利用上のご案内（同意文の再確認・プライバシー・同意リセット） --- */
 function renderAbout(){
   view.innerHTML = '<div class="fadein">' +
-    secHTML("ABOUT","利用上のご案内") +
+    secHTML("利用上のご案内") +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">このアプリでできること・できないこと</div>' +
       '<div style="font-size:13px;line-height:2;color:var(--ink);margin-bottom:6px">' + esc(CONSENT_TEXT) + '</div>' +
@@ -5027,7 +5044,7 @@ function renderCheckup(){
   if(!ckForm) ckForm={ weight:String(p.weight), stage:p.stage, goal:p.goal };
   const ready = ckForm.weight && !isNaN(parseFloat(ckForm.weight)) && ckForm.stage && ckForm.goal;
   view.innerHTML = '<div class="fadein">' +
-    secHTML(isGate?"PERIODIC ASSESSMENT":"WEEKLY CHECK", isGate?"定期アセスメント":"今週の定期チェック") +
+    secHTML(isGate?"昇進前の定期アセスメント":"今週の定期チェック") +
     '<div class="card">' +
       '<div style="font-size:13px;line-height:1.9;color:var(--sub);margin-bottom:14px">' +
         (isGate
@@ -5171,15 +5188,16 @@ function weightWeeklyChartHTML(cur, prev){
 }
 
 function weeklyTrendHTML(){
-  const d = S.days[TODAY];
-  const rec = recorded(d);
-  const bars = pastWeek().concat(rec ? [{day:"今日", score:dayScore(d, S.profile.targets)}] : []);
-  const avg = bars.length ? Math.round(bars.reduce(function(sum,b){ return sum + b.score; },0) / bars.length) : null;
+  const bars = weekScoreSeries();                                  // 月〜日の7枠(欠測はscore=null)
+  const done = bars.filter(function(b){ return b.score!=null; });
+  const avg = done.length ? Math.round(done.reduce(function(sum,b){ return sum + b.score; },0) / done.length) : null;
   function scoreTrendSVG(){
     const W=340, H=178, left=34, right=60, top=22, bottom=32;
     const plotW=W-left-right, plotH=H-top-bottom, base=top+plotH;
     const clampScore=function(v){ return Math.max(0, Math.min(100, Number(v)||0)); };
     const yFor=function(v){ return top + (100-clampScore(v)) * plotH / 100; };
+    // 70〜100点(目標ゾーン)をかなり薄い赤で塗る
+    const targetBand='<rect x="' + left + '" y="' + yFor(100) + '" width="' + plotW + '" height="' + (yFor(70)-yFor(100)) + '" fill="#FBEBEC"/>';
     const ticks=[0,50,70,100];
     const grid=ticks.map(function(t){
       const y=yFor(t), isTarget=t===70;
@@ -5192,30 +5210,34 @@ function weeklyTrendHTML(){
       '<text x="' + (left+plotW+6) + '" y="' + avgLabelY + '" font-size="8.5" font-weight="700" fill="#7A5A12">平均 ' + avg + '点</text>';
     const barW=Math.max(12, Math.min(26, plotW/(bars.length*2.1)));
     const barEls=bars.map(function(b,i){
-      const score=clampScore(b.score);
       const x=left + plotW * (i+.5) / bars.length;
+      // 曜日ラベルは記録の有無にかかわらず7日ぶん並べる(今日は太字)
+      const dayLabel='<text x="' + x + '" y="' + (base+19) + '" text-anchor="middle" font-size="9" font-weight="' + (b.isToday?'700':'400') + '" fill="' + (b.isToday?'var(--ink)':'var(--sub)') + '">' + b.label + '</text>';
+      if(b.score==null) return dayLabel;                          // 記録のない日はバーなし
+      const score=clampScore(b.score);
       const y=yFor(score);
       const h=Math.max(2, base-y);
       const labelY=Math.max(top+8, y-6);
-      return '<rect x="' + (x-barW/2) + '" y="' + y + '" width="' + barW + '" height="' + h + '" rx="4" fill="' + (score>=70?'var(--deep)':'var(--green)') + '"/>' +
+      return '<rect x="' + (x-barW/2) + '" y="' + y + '" width="' + barW + '" height="' + h + '" rx="4" fill="' + (b.isToday?'lightpink':'lightgrey') + '" stroke="' + (b.isToday?'#E79AA8':'#BFBFBF') + '" stroke-width="0.8"/>' +
         '<text x="' + x + '" y="' + labelY + '" text-anchor="middle" font-size="10" font-weight="700" fill="var(--deep)">' + b.score + '</text>' +
-        '<text x="' + x + '" y="' + (base+19) + '" text-anchor="middle" font-size="9" fill="var(--sub)">' + b.day + '</text>';
+        dayLabel;
     }).join("");
-    return '<svg class="weekly-score-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="この1週間のDIETARY BALANCE SCORE">' +
-      grid +
+    return '<svg class="weekly-score-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="今週の食事バランス得点(月曜から日曜)">' +
+      targetBand + grid +
       '<line x1="' + left + '" x2="' + left + '" y1="' + top + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
       '<line x1="' + left + '" x2="' + (left+plotW) + '" y1="' + base + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
       '<text x="' + (left-20) + '" y="' + (top-8) + '" font-size="8" font-weight="700" fill="var(--sub)">点</text>' +
-      '<text x="' + (left+plotW+8) + '" y="' + (base+20) + '" font-size="8" font-weight="700" fill="var(--sub)">日</text>' +
       avgLine + barEls +
     '</svg>';
   }
-  return secHTML("WEEKLY DIETARY BALANCE SCORE","この1週間のDIETARY BALANCE SCORE") +
+  return secHTML("今週の食事バランス") +
     '<div class="card">' +
-      (bars.length===0
-        ? '<div class="empty">まだ記録がありません。<br>毎日のバランススコアが、ここに棒グラフで積み重なっていきます。</div>'
+      (done.length===0
+        ? '<div class="empty">今週はまだ記録がありません。<br>毎日のバランス得点が、月曜から日曜の棒グラフになって並びます。</div>'
         : scoreTrendSVG() +
-          '<div class="hint">過去1週間の平均は' + avg + '点です。70点を超える日を週4日以上に。満点を目指す必要はありません。</div>') +
+          '<div class="hint">月曜から日曜までの1週間を表示しています。今週の記録は' + done.length + '日、平均は' + avg + '点です。' +
+            '<b>うすい赤色の帯が70点以上の目標ゾーン</b>で、ここに入る日を週4日以上に。満点を目指す必要はありません。' +
+            (done.length<7 ? '記録のない日はバーが空いています。' : '') + '</div>') +
     '</div>';
 }
 
@@ -5307,9 +5329,9 @@ function renderReport(){
   }
   view.innerHTML = '<div class="fadein">' +
     weeklyTrendHTML() +
-    secHTML("MONITORING","体重モニタリング") +
+    secHTML("体重モニタリング") +
     '<div class="card">' + chart + '</div>' +
-    secHTML("SLEEP","睡眠のようす") +
+    secHTML("睡眠のようす") +
     (function(){
       const c = sleepCtx();
       if(c.n < 3){
@@ -5326,7 +5348,7 @@ function renderReport(){
         '<div class="hint">簡易SRI（睡眠規則性スコア）は、毎日の就寝・起床時刻がどれだけ揃っているかを示すセルフチェック用の近似指標です。85以上が理想です。成人の睡眠は6時間以上が目安（健康づくりのための睡眠ガイド2023）。</div>' +
       '</div>';
     })() +
-    secHTML("ACTOGRAM","睡眠リズム（過去30日）") +
+    secHTML("睡眠リズム（過去30日）") +
     (function(){
       const rows = actogramRows();
       const nRec = rows.filter(function(r){ return r.known; }).length;
@@ -5345,7 +5367,7 @@ function renderReport(){
         '</div>' +
       '</div>';
     })() +
-    secHTML("VARIETY","食事の多様性") +
+    secHTML("食事の多様性") +
     (function(){
       const v = dvsWeekly();
       if(!v.ready){
@@ -5373,7 +5395,7 @@ function renderReport(){
           '7点以上が理想。色のついていない文字が、今週ののびしろです。</div>' +
       '</div>';
     })() +
-    secHTML("HEALTH DEVIATION","健康偏差値") +
+    secHTML("健康偏差値") +
     (function(){
       const LVr = levelState();
       const log = S.checkupLog || [];
@@ -5395,7 +5417,7 @@ function renderReport(){
           }).join("") + '</div>' : "") +
       '</div>';
     })() +
-    secHTML("DATA EXPORT / RESTORE","記録データの書き出し・復元") +
+    secHTML("記録データの書き出し・復元") +
     '<div class="card">' +
       '<div style="font-size:12px;color:var(--sub);line-height:1.8;margin-bottom:12px">これまでの全記録をCSVファイルとして保存できます。ExcelやRでそのまま開ける形式です。CSVはこの端末の中で作られ、外部には送信されません（ご自身で共有した場合は、共有先での管理になります）。記録は端末内のみに保存されるため、<b>月1回のバックアップ</b>をおすすめします。</div>' +
       '<button class="btn-main" id="csvBtn">CSVをダウンロード</button>' +
