@@ -1,7 +1,7 @@
 {
-  "name": "となりの栄養士",
-  "short_name": "となりの栄養士",
-  "description": "健康な成人向けの食生活・睡眠記録と振り返り支援ツール",
+  "name": "ねこの手も借りたい",
+  "short_name": "ねこの手",
+  "description": "食生活や睡眠日誌のお手伝い。健康な成人向けの記録と振り返り支援ツール",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

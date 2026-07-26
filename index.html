@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#1C4A3B">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="となりの栄養士">
-<title>となりの栄養士</title>
+<meta name="apple-mobile-web-app-title" content="ねこの手も借りたい">
+<title>ねこの手も借りたい</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/png" href="icon-192.png">
@@ -141,13 +141,13 @@ nav .lb{font-size:11px;font-weight:700}
 <div class="wrap">
   <header>
     <div class="brand-head">
-      <span class="brand-mascot-wrap" role="img" aria-label="となりの栄養士のマスコット">
+      <span class="brand-mascot-wrap" role="img" aria-label="マスコットのねこ">
         <img class="brand-mascot-layer brand-mascot-tail" src="wata-tail.png" alt="" aria-hidden="true">
         <img class="brand-mascot-layer brand-mascot-body" src="wata-body.png" alt="" aria-hidden="true">
       </span>
       <div>
-        <div class="appname disp">となりの栄養士</div>
-        <div class="tagline" id="tagline">食生活の記録とふりかえりを、いつでも手のひらに</div>
+        <div class="appname disp">ねこの手も借りたい</div>
+        <div class="tagline" id="tagline">食生活や睡眠日誌のお手伝い。</div>
       </div>
     </div>
     <div class="today-date disp" id="todayDate"></div>
@@ -169,7 +169,7 @@ nav .lb{font-size:11px;font-weight:700}
 <script>
 "use strict";
 /* ============================================================
-   となりの栄養士 — 単一HTML版
+   ねこの手も借りたい — 単一HTML版
    データはこの端末のブラウザ内(localStorage)に自動保存されます。
    ============================================================ */
 
@@ -449,7 +449,7 @@ function dvsWeekly(){
   return { score:score, days:days, freq:freq, missing:missing,
            ready:ready, computable:computable, need:need, startDays:startDays };
 }
-/* ---------- 利用同意・監修表記 ---------- */
+/* ---------- 利用同意 ---------- */
 const CONSENT_VERSION = "1.1";   // 同意文を改訂したら必ず数字を上げる(再同意が求められる)
 const CONSENT_TEXT =
   "本アプリは、健康な成人を対象とした食生活の記録・振り返り支援ツールです。" +
@@ -600,7 +600,7 @@ const OPENINGS = [
   "これは習慣の力がついてきた証拠です。",
   "今日の記録、しっかり拝見しました。良いですね。",
   "数字の向こうに、良い習慣が見えてきています。",
-  "担当栄養士として、ここは強調させてください。",
+  "毎日となりで見ている立場から、ここは強調させてください。",
   "こういう日を待っていました。",
   "さりげない行動ですが、後からじわっと効いてくるやつです。",
   "今日の中に、次につながる材料がちゃんとあります。",
@@ -2511,7 +2511,7 @@ addNextVariants(5.44, (p,d)=> mealRecorded(d) && dayScore(d,p.targets)<70 && sna
 ]);
 
 /* --- 旬のひとこと（月別・各2種） ---
-   管理栄養士らしい季節の提案。3日に1回・枠が空いているときに表示 */
+   季節に合わせた提案。3日に1回・枠が空いているときに表示 */
 const SEASONAL = [
   ["小松菜やほうれん草が甘くなる季節です。鍋や雑煮の青みにひとつかみ足すだけで、副菜1皿が簡単に稼げます。","みかんがいちばんおいしい時期です。こたつのお供を菓子からみかんに替えるだけで、果物の目標はほぼ達成です。"],
   ["大根や白菜が安くておいしい時期です。豚汁や鍋にすれば、1杯で副菜2皿分も夢ではありません。","寒い朝こそ温かい牛乳やカフェオレを。体も温まり、乳製品の1皿が自然に埋まります。"],
@@ -4324,7 +4324,7 @@ function renderHome(){
         const td = totalRecordedDays();
         const nm = (p.name||"あなた") + "さん";
         if(td===0) return {tone:"stage", title:"はじめまして",
-          body:nm + "、担当させていただきます。まずは今日食べたものを「記録」タブから皿数で入力してみてください。最初の1週間は、内容の良し悪しよりも「記録すること」自体が目標です。"};
+          body:nm + "、はじめまして。今日から、ねこの手をお貸しします。まずは今日食べたものを「記録」タブから皿数で入力してみてください。最初の1週間は、内容の良し悪しよりも「記録すること」自体が目標です。"};
         const stk = getStreak();
         const variants = (stk===0 && td>=7) ? [
           nm + "、おかえりなさい。少し間があきましたが、記録は途切れても習慣は消えていません。今日の1件から、また一緒に積み直しましょう。",
@@ -4449,7 +4449,7 @@ function renderHome(){
       (streak>=2?'<div style="margin-top:8px;font-size:11px;opacity:.85;border-top:1px solid rgba(255,255,255,.2);padding-top:8px">'+esc(streakMsg(streak))+'</div>':"") +
     '</div>' +
     (rec?"":'<div class="card" style="background:var(--pale);border-color:var(--green)"><div style="display:flex;gap:10px;align-items:flex-start"><div style="font-size:20px">🎯</div><div><div class="disp" style="font-size:13px;font-weight:700;color:var(--deep);margin-bottom:2px">今日のミニチャレンジ</div><div style="font-size:13px;line-height:1.7;color:var(--ink)">'+esc(todayChallenge())+'</div></div></div></div>') +
-    secHTML("今日の栄養士ノート") +
+    secHTML("今日の食事ノート") +
     '<div style="font-size:10px;color:var(--sub);margin:-6px 0 8px">※コメントは記録をもとにアプリが自動生成する一般的な情報です</div>' +
     foodNotes.map(noteHTML).join("") +
     (sleepNotes.length ? secHTML("睡眠の振り返り") + sleepNotes.map(noteHTML).join("") : (hasSleep?'<div class="card"><div class="empty">睡眠は記録できています。数日分たまると、規則性のコメントも表示されます。</div></div>':'')) +
@@ -5003,7 +5003,7 @@ function renderAbout(){
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">コメントについて</div>' +
-      '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の栄養士ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。</div>' +
+      '<div style="font-size:13px;line-height:2;color:var(--ink)">「今日の食事ノート」などのコメントは、あらかじめ用意された一般的な情報をもとに、あなたの記録に合わせてアプリが自動生成するものです。専門職による個別の栄養指導・医療上の助言ではありません。</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="disp" style="font-size:14px;font-weight:700;margin-bottom:8px">5つの料理グループとSVの定義</div>' +
@@ -5112,7 +5112,7 @@ function weightComment(p){
     if(p.goal==="loss"){
       trendLine += (wt.diff<=-0.1 && wt.diff>=-0.75) ? "目標どおりの理想的な動きです。"
         : wt.diff < -0.75 ? "ペースが速すぎます。食事量を目標まで戻しましょう。"
-        : wt.diff < 0.1 ? "いまは停滞期です。ホームの栄養士ノートに対策を出しています。"
+        : wt.diff < 0.1 ? "いまは停滞期です。ホームの食事ノートに対策を出しています。"
         : "増加傾向です。今週の夕食時刻と補食・間食を見直してみましょう。";
     } else if(p.goal==="gain"){
       trendLine += wt.diff>=0.1 ? "計画どおり増えています。この調子です。"
@@ -5612,10 +5612,10 @@ function fireReminderIfNeeded(){
   const name = S.profile && S.profile.name ? S.profile.name + "さん、" : "";
   const body = name + "今日の食事はまだ記録されていません。1分だけ、今日の分をつけませんか？";
   if(("Notification" in window) && Notification.permission==="granted"){
-    const fallback = function(){ try{ new Notification("となりの栄養士", {body:body, icon:"icon-192.png", tag:"tonari-reminder"}); }catch(e){} };
+    const fallback = function(){ try{ new Notification("ねこの手も借りたい", {body:body, icon:"icon-192.png", tag:"tonari-reminder"}); }catch(e){} };
     if(navigator.serviceWorker && navigator.serviceWorker.ready){
       navigator.serviceWorker.ready.then(function(reg){
-        if(reg && reg.showNotification) reg.showNotification("となりの栄養士", {body:body, icon:"icon-192.png", badge:"icon-192.png", tag:"tonari-reminder"});
+        if(reg && reg.showNotification) reg.showNotification("ねこの手も借りたい", {body:body, icon:"icon-192.png", badge:"icon-192.png", tag:"tonari-reminder"});
         else fallback();
       }).catch(fallback);
     } else fallback();
@@ -5634,7 +5634,7 @@ function render(){
   renderFooter();
   if(!S.profile){ nav.style.display="none"; banner.innerHTML=""; renderOnboarding(); return; }
   nav.style.display="block";
-  $("tagline").textContent=(S.profile.name||"あなた") + "さんの食生活の見直しに、毎日そっと寄りそいます";
+  $("tagline").textContent=(S.profile.name||"あなた") + "さんの食生活や睡眠日誌のお手伝い。";
   if(checkupMode){ nav.querySelectorAll("button").forEach(b=>b.classList.toggle("on",false)); $("banner").innerHTML=""; renderCheckup(); return; }
   nav.querySelectorAll("button").forEach(b=> b.classList.toggle("on", b.dataset.tab===tab));
   const stale = S.promise && S.promiseWeek!==undefined && S.promiseWeek!==WEEK_IDX;
