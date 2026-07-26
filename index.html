@@ -5243,18 +5243,21 @@ function weeklyTrendHTML(){
 
 /* --- 経過（体重） --- */
 /* ============================================================
-   睡眠アクトグラム(過去30日・ダブルプロット)
+   睡眠アクトグラム(過去30日・21時起点のシングルプロット)
    ・縦軸=日付(上から古い順に30日)。1行=その日付の睡眠記録
      (前夜の就寝〜当日の起床)。
-   ・横軸は21時起点の48時間ダブルプロット。左半分が「前日21時〜
-     当日21時」、右半分が「当日21時〜翌日21時」。夜間の睡眠が
-     行の途中で切れず、各行の中ほどにまとまって見える。
-   ・黒=睡眠、赤=昨晩の睡眠、白=覚醒、薄いグレー=記録のない日。
+   ・横軸は21時起点の24時間(シングルプロット)。「前日21時〜当日21時」
+     を1行に描くため、夜間の睡眠が途中で切れずに1本の帯として収まる。
+   ・黒=睡眠、赤=昨晩の睡眠、薄いグレー=記録のない日。
+     覚醒の背景は曜日で塗り分ける(平日=白、土曜=ごく薄いsteelblue、
+     日曜=lightpink)。平日と週末のリズムの差を読み取るため。
    ・データが30日に満たなくても、30日の枠を常に表示する。
    ============================================================ */
 const ACTO_START = 21;                 // 横軸の起点時刻(21時)
 const ACTO_SLEEP = "#26261F";          // 睡眠(黒)
 const ACTO_LAST  = "#C62828";          // 昨晩の睡眠(赤)
+const ACTO_SAT   = "#E4EDF5";          // 土曜の背景(ごく薄いsteelblue)
+const ACTO_SUN   = "lightpink";        // 日曜の背景
 function actogramRows(){
   const parts = TODAY.split("-").map(Number);
   const keyOf = function(off){ return dateKey(new Date(parts[0], parts[1]-1, parts[2]+off)); };
@@ -5268,7 +5271,7 @@ function actogramRows(){
     const w = (d && d.sleep) ? normSleepWindow(d.sleep) : null;
     const bars = w ? [clip(w.bed - ACTO_START, w.wake - ACTO_START)] : [];
     const dt = new Date(parts[0], parts[1]-1, parts[2]+off);
-    rows.push({ off:off, label:(dt.getMonth()+1)+"/"+dt.getDate(),
+    rows.push({ off:off, label:(dt.getMonth()+1)+"/"+dt.getDate(), dow:dt.getDay(),
       known: !!w, isLast: off===0, bars:bars });
   }
   return rows;
@@ -5276,45 +5279,38 @@ function actogramRows(){
 function actogramHTML(rows){
   const W = 340, left = 36, right = 8, top = 18, rh = 6.5, bottom = 6;
   const plotW = W - left - right;
-  const x = function(h){ return left + plotW * h / 48; };
+  const x = function(h){ return left + plotW * h / 24; };     // 21時起点の24時間(シングルプロット)
   const H = top + rows.length*rh + bottom;
   const plotH = rows.length*rh;
-  /* 重ね順を分けて組む: 背景 → 時刻グリッド → 睡眠バー → 枠・ラベル。
-     バーを最後に置くことで、短い帯がグリッド線に隠れない。 */
+  /* 重ね順: 曜日の背景 → 時刻グリッド → 睡眠バー → 枠・ラベル。
+     バーを後に置くことで、短い帯がグリッド線に隠れない。 */
   let bg = '', grid = '', bars = '', labels = '';
   // 時刻目盛り: 行内の t=0 が21時。実時刻 = (21+t) % 24
-  [0,3,9,15,24,27,33,39,48].forEach(function(t){
+  [0,3,6,9,12,15,18,21,24].forEach(function(t){
     labels += '<text x="' + x(t).toFixed(1) + '" y="' + (top-6) + '" font-size="7.5" fill="#9AA09B" text-anchor="middle">' + ((ACTO_START + t) % 24) + '</text>';
     grid += '<line x1="' + x(t).toFixed(1) + '" y1="' + top + '" x2="' + x(t).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#E4E4DE" stroke-width="0.6"/>';
   });
-  // 日付の変わり目(0時 = t=3 と t=27)を点線で強調
-  [3,27].forEach(function(t){
-    grid += '<line x1="' + x(t).toFixed(1) + '" y1="' + top + '" x2="' + x(t).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#B9C0BA" stroke-width="1" stroke-dasharray="3 2"/>';
-  });
-  // 左右の折り返し(21時)
-  grid += '<line x1="' + x(24).toFixed(1) + '" y1="' + top + '" x2="' + x(24).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#B9C0BA" stroke-width="1"/>';
+  // 日付の変わり目(0時 = t=3)を点線で強調
+  grid += '<line x1="' + x(3).toFixed(1) + '" y1="' + top + '" x2="' + x(3).toFixed(1) + '" y2="' + (top+plotH) + '" stroke="#B9C0BA" stroke-width="1" stroke-dasharray="3 2"/>';
   const cell = function(hx, y, w, fill){
     return '<rect x="' + hx.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + (rh-1).toFixed(1) + '" fill="' + fill + '"/>';
   };
   rows.forEach(function(r, i){
     const y = top + i*rh;
-    const nextRow = rows[i+1] || null;   // 右半分 = 翌日の行(最終行の右は未来なので記録なし)
-    // 背景: 白=覚醒(記録あり) / 薄グレー=記録のない日
-    bg += cell(x(0), y, plotW/2, r.known ? '#FFFFFF' : '#EFEFE9');
-    bg += cell(x(24), y, plotW/2, (nextRow && nextRow.known) ? '#FFFFFF' : '#EFEFE9');
-    // 睡眠バー: 左半分=その行の睡眠、右半分=翌日の行の睡眠を+24hシフト
-    const put = function(seg, shift, color){
-      if(seg[1] > seg[0]) bars += cell(x(shift+seg[0]), y, x(shift+seg[1])-x(shift+seg[0]), color);
-    };
-    r.bars.forEach(function(seg){ put(seg, 0, r.isLast ? ACTO_LAST : ACTO_SLEEP); });
-    if(nextRow) nextRow.bars.forEach(function(seg){ put(seg, 24, nextRow.isLast ? ACTO_LAST : ACTO_SLEEP); });
-    // 日付ラベル(5行ごと+最終行=昨晩の睡眠)
-    if(i % 5 === 0 || r.isLast){
+    // 背景(背面レイヤー): 平日=白 / 土曜=ごく薄いsteelblue / 日曜=lightpink / 記録なし=薄グレー
+    const awakeFill = r.dow===6 ? ACTO_SAT : r.dow===0 ? ACTO_SUN : '#FFFFFF';
+    bg += cell(x(0), y, plotW, r.known ? awakeFill : '#EFEFE9');
+    // 睡眠バー(最終行=昨晩は赤)
+    r.bars.forEach(function(seg){
+      if(seg[1] > seg[0]) bars += cell(x(seg[0]), y, x(seg[1])-x(seg[0]), r.isLast ? ACTO_LAST : ACTO_SLEEP);
+    });
+    // 日付ラベルは1週間ごと(今日から7日刻みで遡る)
+    if((rows.length-1-i) % 7 === 0){
       labels += '<text x="' + (left-4) + '" y="' + (y + rh - 1.5).toFixed(1) + '" font-size="7.5" fill="' + (r.isLast ? ACTO_LAST : '#9AA09B') + '" font-weight="' + (r.isLast ? '700' : '400') + '" text-anchor="end">' + r.label + '</text>';
     }
   });
   const frame = '<rect x="' + x(0).toFixed(1) + '" y="' + top + '" width="' + plotW.toFixed(1) + '" height="' + plotH.toFixed(1) + '" fill="none" stroke="var(--line)" stroke-width="1"/>';
-  return '<svg class="actogram-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block" role="img" aria-label="過去30日の睡眠アクトグラム">' +
+  return '<svg class="actogram-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block" role="img" aria-label="過去30日の睡眠アクトグラム(21時起点の24時間)">' +
     bg + grid + bars + frame + labels + '</svg>';
 }
 function renderReport(){
@@ -5356,11 +5352,14 @@ function renderReport(){
         '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:10px;color:var(--sub);margin-bottom:6px">' +
           '<span><span style="display:inline-block;width:12px;height:8px;background:' + ACTO_SLEEP + ';vertical-align:-1px;margin-right:4px"></span>睡眠</span>' +
           '<span><span style="display:inline-block;width:12px;height:8px;background:' + ACTO_LAST + ';vertical-align:-1px;margin-right:4px"></span>昨晩の睡眠</span>' +
-          '<span><span style="display:inline-block;width:12px;height:8px;background:#fff;border:1px solid var(--line);vertical-align:-1px;margin-right:4px"></span>覚醒</span>' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:#fff;border:1px solid var(--line);vertical-align:-1px;margin-right:4px"></span>覚醒（平日）</span>' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:' + ACTO_SAT + ';border:1px solid var(--line);vertical-align:-1px;margin-right:4px"></span>土曜</span>' +
+          '<span><span style="display:inline-block;width:12px;height:8px;background:' + ACTO_SUN + ';vertical-align:-1px;margin-right:4px"></span>日曜</span>' +
           '<span><span style="display:inline-block;width:12px;height:8px;background:#EFEFE9;vertical-align:-1px;margin-right:4px"></span>記録なし</span>' +
         '</div>' +
         actogramHTML(rows) +
-        '<div class="hint" style="margin-top:8px">縦は日付（上が30日前、下が昨晩）、横は<b>21時から翌21時まで</b>の24時間を2つ並べた<b>ダブルプロット</b>です。左半分がその日付の睡眠（前夜21時〜当日21時）、右半分が翌日ぶんで、夜の睡眠が途中で切れずに1本の帯として見えます。点線が日付の変わり目（0時）。' +
+        '<div class="hint" style="margin-top:8px">縦は日付（上が30日前、下が昨晩）、横は<b>21時から翌21時まで</b>の24時間です。1行がその日付の睡眠（前夜21時〜当日21時）なので、夜の睡眠が途中で切れずに1本の帯として収まります。点線が日付の変わり目（0時）。日付のラベルは1週間ごとに表示しています。' +
+          '<b>土曜は薄い青、日曜は薄い桃色</b>の背景にしてあり、平日と週末で就寝・起床がずれていないかを見比べられます。' +
           '就寝・起床の時刻が毎日そろっていれば、帯がまっすぐ縦に並びます。帯が右へ流れていくときは夜型化、階段状に乱れるときはリズムの不安定さのサインです。<b style="color:' + ACTO_LAST + '">赤い帯が昨晩の睡眠</b>です。' +
           (nRec===0 ? '<br>まだ睡眠の記録がありません。「記録」タブで昨晩の就寝・起床を入力すると、この図に現れます。'
                     : '<br>この30日のうち、睡眠を記録できた日は' + nRec + '日です。記録のない日は薄いグレーで表示しています。') +
