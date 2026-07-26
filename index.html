@@ -685,10 +685,12 @@ const FACTS = [
       "default":"このひと皿の積み重ねが、将来の腸内環境と免疫の土台になります。"
     }},
   { when:(p,d)=> d.sv["副菜"] > 0 && d.sv["副菜"] < p.targets["副菜"],
-    fact:"今日も野菜の小鉢に手が伸びています。",
+    /* 記録されるのは副菜の皿数(SV)だけで、それが小鉢か付け合わせかは判別できない。
+       料理の形には触れず、グループ名で述べる。 */
+    fact:"今日も副菜に手が伸びています。",
     benefits:{
       loss:"ゼロにしない選択を続けられる人は、減量でも結果を出しやすくなります。野菜・きのこ・海藻の1皿が入ると、食物繊維で満足感が出やすく、次の食事や菓子類に流れにくくなります。",
-      bp:"野菜を欠かさない姿勢が、カリウムと食物繊維の安定供給につながっています。あと1皿で、食卓全体をさらに整えやすくなります。",
+      bp:"副菜を欠かさない姿勢が、カリウムと食物繊維の安定供給につながっています。あと1皿で、食卓全体をさらに整えやすくなります。",
       "default":"ゼロにしない、という選択を続けられる人は強いです。あと1皿が習慣になれば、無理のない調整につながります。"
     }},
   { when:(p,d)=> d.sv["果物"] >= 1,
@@ -4219,11 +4221,9 @@ function pastWeek(){
    グラフ専用。コメント生成が使う pastWeek() とは別物。 */
 function weekScoreSeries(){
   const parts = TODAY.split("-").map(Number);
-  const idx = dayIndexFromKey(TODAY);
-  const back = (idx + 3) % 7;              // 月曜からの経過日数
   const out = [];
-  for(let i=0;i<7;i++){
-    const dt = new Date(parts[0], parts[1]-1, parts[2] - back + i);
+  for(let i=6;i>=0;i--){                   // 6日前 → 当日の順に並べる
+    const dt = new Date(parts[0], parts[1]-1, parts[2] - i);
     const k = dateKey(dt);
     const d = S.days[k];
     const has = !!(d && recorded(d) && S.profile);
@@ -5222,7 +5222,7 @@ function weeklyTrendHTML(){
         '<text x="' + x + '" y="' + labelY + '" text-anchor="middle" font-size="10" font-weight="700" fill="var(--deep)">' + b.score + '</text>' +
         dayLabel;
     }).join("");
-    return '<svg class="weekly-score-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="今週の食事バランス得点(月曜から日曜)">' +
+    return '<svg class="weekly-score-svg" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;overflow:visible" role="img" aria-label="過去7日間の食事バランス得点(6日前から今日まで)">' +
       targetBand + grid +
       '<line x1="' + left + '" x2="' + left + '" y1="' + top + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
       '<line x1="' + left + '" x2="' + (left+plotW) + '" y1="' + base + '" y2="' + base + '" stroke="var(--line)" stroke-width="1.2"/>' +
@@ -5230,12 +5230,12 @@ function weeklyTrendHTML(){
       avgLine + barEls +
     '</svg>';
   }
-  return secHTML("今週の食事バランス") +
+  return secHTML("過去7日間の食事バランス") +
     '<div class="card">' +
       (done.length===0
-        ? '<div class="empty">今週はまだ記録がありません。<br>毎日のバランス得点が、月曜から日曜の棒グラフになって並びます。</div>'
+        ? '<div class="empty">この7日間はまだ記録がありません。<br>毎日のバランス得点が、左から古い順に7日ぶんの棒グラフになって並びます。</div>'
         : scoreTrendSVG() +
-          '<div class="hint">月曜から日曜までの1週間を表示しています。今週の記録は' + done.length + '日、平均は' + avg + '点です。' +
+          '<div class="hint">今日を含む過去7日間を、左から古い順に表示しています（いちばん右が今日）。この7日間の記録は' + done.length + '日、平均は' + avg + '点です。' +
             '<b>うすい赤色の帯が70点以上の目標ゾーン</b>で、ここに入る日を週4日以上に。満点を目指す必要はありません。' +
             (done.length<7 ? '記録のない日はバーが空いています。' : '') + '</div>') +
     '</div>';
