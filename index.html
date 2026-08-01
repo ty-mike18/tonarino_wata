@@ -1909,6 +1909,17 @@ function selectAdvice(candidates){
   }
   return out;
 }
+/* 履歴の中で「今日より前のいちばん新しい日」の項目を返す。
+   カレンダー上の前日ではなく“前回コメントを見た日”を基準にすることで、
+   記録が飛んだ日をはさんでも、利用者から見て続けて同じ文面が出るのを防ぐ。 */
+function lastHistoryEntries(hist){
+  if(!Array.isArray(hist)) return [];
+  const past = hist.filter(function(h){ return h && h.date && h.date < TODAY; });
+  if(!past.length) return [];
+  let latest = past[0].date;
+  past.forEach(function(h){ if(h.date > latest) latest = h.date; });
+  return past.filter(function(h){ return h.date === latest; });
+}
 function rememberAdviceHistory(list){
   if(!Array.isArray(S.adviceHistory)) S.adviceHistory = [];
   let changed = false;
@@ -2650,7 +2661,7 @@ function weeklyReviewNote(p, ctx, salt){
   }
   if(w.fuku!=null && pw.fuku!=null && w.fuku - pw.fuku >= 0.5){
     cands.push({ key:"fuku_up", tone:"praise", title:"副菜が増えています",
-      body:"記録を2週間分ならべると、副菜が1日あたり" + f1(pw.fuku) + "皿から" + f1(w.fuku) + "皿に増えています。野菜・きのこ・海藻の皿がじわっと増えるのは、食卓が良い方向に動いているいちばん確かなサインです。" });
+      body:"記録を2週間分ならべると、副菜が1日あたり" + f1(pw.fuku) + "皿から" + f1(w.fuku) + "皿に増えています。この皿数がじわっと増えるのは、食卓が良い方向に動いているいちばん確かなサインです。" });
   }
   if(w.fruit!=null && pw.fruit!=null && w.fruit - pw.fruit >= 0.4){
     cands.push({ key:"fruit_up", tone:"praise", title:"果物の習慣が育っています",
@@ -2662,7 +2673,7 @@ function weeklyReviewNote(p, ctx, salt){
   }
   if(w.early - pw.early >= 2){
     cands.push({ key:"early_up", tone:"praise", title:"夜のリズムが変わってきました",
-      body:"夕食を21時前に終えられた日が、先週の" + pw.early + "日から今週は" + w.early + "日に増えています。夜の食事時刻は、睡眠にも翌朝の食欲にも効いてくる土台の部分。数字がそれを裏付けています。" });
+      body:"夕食が21時前に収まった日は、先週" + pw.early + "日、今週は" + w.early + "日。夜の食事時刻は、睡眠にも翌朝の食欲にも効いてくる土台の部分です。数字がそれを裏付けています。" });
   }
   if(w.weigh - pw.weigh >= 2){
     cands.push({ key:"weigh_up", tone:"praise", title:"体重計に乗る週になっています",
@@ -2681,12 +2692,13 @@ function weeklyReviewNote(p, ctx, salt){
       body:"平均スコアは先週の" + pw.score + "点から今週" + w.score + "点へ少し下がりました。こういう週は誰にでもあります。大事なのは、下がった理由がデータに残っていること。まずは明日の朝食と夕食の時刻、どちらかひとつだけ整え直しましょう。" });
   }
   if(!cands.length) return null;
-  // 前日に出した観点は避ける
-  const ydKey = dateKey(new Date(now.getTime() - 86400000));
-  const ydKeys = (S.reviewHistory||[]).filter(function(h){ return h && h.date===ydKey; }).map(function(h){ return h.key; });
+  // 前回出した観点は避ける（記録が飛んだ日をはさんでも、利用者には「続けて同じ」に見えるため）
+  const ydKeys = lastHistoryEntries(S.reviewHistory).map(function(h){ return h.key; });
   const fresh = cands.filter(function(c){ return ydKeys.indexOf(c.key)<0; });
-  const pool = fresh.length ? fresh : cands;
-  const c = pool[(salt>>>3) % pool.length];
+  /* 前回と同じ観点しか残らない日は、同じ文面を繰り返すより出さないほうがよい。
+     枠は他のノートが埋めるので、ふりかえりは観点が変わった日に届く。 */
+  if(!fresh.length) return null;
+  const c = fresh[(salt>>>3) % fresh.length];
   const kept = (S.reviewHistory||[]).filter(function(h){ return h && h.date!==TODAY; });
   S.reviewHistory = kept.concat([{ date:TODAY, key:c.key }]).slice(-6);
   save();
@@ -2707,11 +2719,10 @@ function buildNotes(p, d, weekScores, ctx){
   }
   // 1) ほめ言葉: 事実 + その延長線上のメリット（量・質・タイミング・規則性）
   //    ・2件目は「導入句」「事実のテーマ」が1件目と重ならないものだけを採用する
-  //    ・前日に見せた事実テーマ・導入句はできるだけ避け、連日同じ文面になるのを防ぐ
+  //    ・前回見せた事実テーマ・導入句はできるだけ避け、続けて同じ文面になるのを防ぐ
   const facts = FACTS.filter(f => f.when(p,d,ctx));
   const factText = f => (typeof f.fact==="function"?f.fact(p,d,ctx):f.fact);
-  const ydKey = dateKey(new Date(now.getTime() - 86400000));
-  const yesterPraise = (S.praiseHistory||[]).filter(function(h){ return h && h.date===ydKey; });
+  const yesterPraise = lastHistoryEntries(S.praiseHistory);
   const yesterKeys = yesterPraise.map(function(h){ return h.key; });
   const yesterOpens = yesterPraise.map(function(h){ return h.open; });
   const yesterTitles = yesterPraise.map(function(h){ return h.t; }).filter(Boolean);
@@ -3210,7 +3221,7 @@ const LEVEL_PLATEAU_COMMENTS = [
   { title:"停滞はデータが増えた証拠です", when:c=>c.sameLevelDays>=7 && c.sameLevelDays<14 && c.rec7>=5,
     body:c=>"同じ健康偏差値が続いていますが、この1週間は"+c.rec7+"日記録できています。記録があるから停滞が見えている、という状態です。上げる材料は、記録の中にもう残り始めています。" },
   { title:"あと少しの足踏みです", when:c=>c.sameLevelDays>=7 && c.progress>=0.7,
-    body:c=>"健康偏差値は同じでも、次の段階までの進み具合は"+c.progressPct+"%まで来ています。ここで新しいことを増やしすぎず、朝食・21時前夕食・DVSの空欄1つのどれかを守るのが近道です。" },
+    body:c=>"健康偏差値の数字は同じでも、ホームのバーは着実に伸びています。ここで新しいことを増やしすぎず、朝食・21時前夕食・DVSの空欄1つのどれかを守るのが近道です。" },
   { title:"上がらない週の見方", when:c=>c.sameLevelDays>=7 && c.rec7<4,
     body:c=>"健康偏差値が動きにくい一番の理由は、今週の記録日数が少なめなことです。内容を完璧にする前に、食事時刻か補食だけでも残す日を増やすと、次の判定材料がそろいます。" },
   { title:"停滞中の小さな勝ち", when:c=>c.sameLevelDays>=7 && c.good70>=2,
@@ -3223,7 +3234,7 @@ const LEVEL_PLATEAU_COMMENTS = [
   { title:"記録は続いています", when:c=>c.sameLevelDays>=14 && c.sameLevelDays<30 && c.rec7>=6,
     body:c=>"偏差値は2週間ほど変わっていませんが、記録は続いています。ここから必要なのは記録量ではなく、記録の中身を少し整えることです。今週は70点の日を週2日から狙いましょう。" },
   { title:"横ばい期の作戦", when:c=>c.sameLevelDays>=14 && c.progress<0.35,
-    body:c=>"今は次の段階までの進み具合が"+c.progressPct+"%です。横ばい期の序盤では、大きな挑戦よりも『悪い日を減らす』ほうが効きます。菓子類と甘い飲み物が重なる日を1日減らせれば十分です。" },
+    body:c=>"いまは次の偏差値へ向かう助走の時期です。横ばい期の序盤では、大きな挑戦よりも『悪い日を減らす』ほうが効きます。菓子類と甘い飲み物が重なる日を1日減らせれば十分です。" },
   { title:"数字が動かない日の安心材料", when:c=>c.sameLevelDays>=14 && c.good70>=3,
     body:c=>"健康偏差値はまだ同じですが、70点以上の日が週"+c.good70+"日あります。数字は段差で上がりますが、生活は坂道で変わります。いまは坂道を登れている途中です。" },
 
@@ -3241,7 +3252,7 @@ const LEVEL_PLATEAU_COMMENTS = [
   { title:"肩書が変わらない時期", when:c=>c.sameTitleDays>=21 && c.level>=30 && c.progress<0.7,
     body:c=>"今の肩書が"+c.sameTitleDays+"日ほど続いています。肩書は幅が広いので、同じ表示でも中では少しずつ進んでいます。焦るより、週の平均点を整えるほうが昇格に近づきます。" },
   { title:"同じ肩書の中で進んでいます", when:c=>c.sameTitleDays>=21 && c.level>=30 && c.progress>=0.7,
-    body:c=>"肩書は変わっていませんが、次の段階まで"+c.progressPct+"%まで進んでいます。ここは最後の詰めです。新しい挑戦より、良い日を再現することを優先しましょう。" },
+    body:c=>"肩書は変わっていませんが、内側では着実に積み上がっています。ここは最後の詰めです。新しい挑戦より、良い日を再現することを優先しましょう。" },
   { title:"肩書停滞の見方", when:c=>c.sameTitleDays>=45 && c.level>=30,
     body:c=>"同じ肩書が続くと止まって見えますが、上位帯ほど肩書の幅は広くなります。毎日少しずつ健康的な日を積む設計なので、急に変わらないこと自体は自然です。" },
   { title:"肩書より生活の再現性", when:c=>c.sameTitleDays>=45 && c.good70>=3,
@@ -3250,9 +3261,9 @@ const LEVEL_PLATEAU_COMMENTS = [
     body:c=>"今の肩書が続いていますが、少し乱れが重なると上位帯では伸びが鈍ります。昇格を急ぐより、まず今の肩書を安定して守る生活を作りましょう。" },
 
   { title:"あと一歩の停滞", when:c=>c.progress>=0.85 && c.sameLevelDays>=5,
-    body:c=>"次の段階まで"+c.progressPct+"%です。ここで無理に満点を狙う必要はありません。70点以上の日をもう1日、または朝食と早い夕食をそろえる日を1日作れれば十分です。" },
-  { title:"最後の数%はゆっくりです", when:c=>c.sameLevelDays>=5 && c.progress>=0.9,
-    body:c=>"進み具合は"+c.progressPct+"%。最後の数%は、健康的な日が続くかを見ている場所です。今日だけ頑張るより、明日も繰り返せる小ささで整えましょう。" },
+    body:c=>"次の偏差値まであと少しです。ここで無理に満点を狙う必要はありません。70点以上の日をもう1日、または朝食と早い夕食をそろえる日を1日作れれば十分です。" },
+  { title:"最後のひと伸びはゆっくりです", when:c=>c.sameLevelDays>=5 && c.progress>=0.9,
+    body:c=>"ホームのバーは終盤まで来ています。最後のひと伸びは、健康的な日が続くかどうかを見ている場所です。今日だけ頑張るより、明日も繰り返せる小ささで整えましょう。" },
   { title:"昇格前の確認期間", when:c=>c.level>=30 && c.progress>=0.8 && (nearNextPlateau(c) || c.sameTitleDays>=21),
     body:c=>"次の段階が近づいています。ある肩書以降は、短い頑張りより継続性を重く見ます。今週は『良い日を崩さない』ことを目標にしましょう。" },
   { title:"あと少しで届きそうな時", when:c=>sameOrTitlePlateau(c) && c.progress>=0.75 && c.avgPenalty>=4,
