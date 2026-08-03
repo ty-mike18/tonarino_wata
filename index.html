@@ -16,6 +16,12 @@
 :root{
   --bg:#F3F7F4; --ink:#26342E; --sub:#5E6F67; --green:#2C6B57; --deep:#1C4A3B;
   --pale:#E3EFE8; --yuzu:#E5A93C; --ume:#B9484F; --line:#D8E2DC; --card:#FFF;
+  /* ゲージ用の色。地の色に対する見え方を検証して選んでいる:
+     濃緑の板(#1C4A3B)の上で アクア×ゆず は色覚多様性下でも ΔE 14.0 で区別でき、
+     いずれも地との明暗比 3:1 以上。白いカードの上では彩度を上げた段を使う。 */
+  --hp:#5FDDBE; --hp-deep:#2FB79A; --hp-lite:#8DEBD3;
+  --lm:#E5A93C; --lm-deep:#C08018; --lm-lite:#F7D486;
+  --gauge-green:#12885F; --gauge-yuzu:#C98620;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
@@ -31,7 +37,60 @@ header{padding:18px 2px 14px}
 .brand-mascot-body{z-index:2}
 .appname{font-size:23px;font-weight:900;color:var(--deep)}
 .tagline{font-size:11px;color:var(--sub);margin-top:2px}
-.today-date{display:inline-block;margin-top:8px;background:var(--deep);color:#fff;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700}
+.head-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.today-date{display:inline-block;background:var(--deep);color:#fff;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700}
+/* BMIは日付の隣に置く。得点の板の中は「今日の記録の話」だけにしたいため。 */
+.bmi-chip{display:inline-flex;align-items:baseline;gap:6px;background:#fff;border:1.5px solid var(--line);
+  border-radius:999px;padding:3px 13px;line-height:1.5}
+.bmi-chip .k{font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.06em}
+.bmi-chip .v{font-size:14px;font-weight:900;color:var(--deep)}
+.bmi-chip .s{font-size:10px;font-weight:700;color:var(--sub)}
+
+/* ===== ゲージ =====
+   ゲーム画面の体力ゲージの作りを借りている。
+   ・わずかに傾いた枠と内側の窪みで、板にはめ込まれた部品に見せる
+   ・目盛りの区切りは線を描かず、地の色の2pxの隙間で分ける
+   ・上辺のハイライトと先端の光で、量の伸びを目で追えるようにする
+   数値は必ず文字でも併記しているので、色だけに意味を持たせていない。 */
+.gauge{position:relative;height:13px;border-radius:2px;overflow:hidden;transform:skewX(-14deg);
+  background:var(--g-track);box-shadow:inset 0 1.5px 3px rgba(0,0,0,.42),0 0 0 1px var(--g-frame)}
+.gauge-fill{position:absolute;top:0;bottom:0;left:0;background:var(--g-grad);
+  box-shadow:0 0 9px var(--g-glow);transition:width .65s cubic-bezier(.22,.9,.28,1)}
+.gauge-fill::before{content:"";position:absolute;left:0;right:0;top:0;height:40%;
+  background:linear-gradient(180deg,rgba(255,255,255,.6),rgba(255,255,255,0))}
+.gauge-fill::after{content:"";position:absolute;top:0;bottom:0;right:0;width:2px;background:rgba(255,255,255,.92)}
+.gauge-seg{position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 2px),var(--g-gap) calc(10% - 2px) 10%)}
+/* 目標の位置に立てる目印(得点なら70点)。
+   目盛りの隙間に埋もれないよう、ゲージの外側に少しはみ出させる。 */
+.gauge-wrap{position:relative}
+.gauge-mark{position:absolute;top:-4px;bottom:-4px;width:2px;z-index:2;pointer-events:none;border-radius:1px;
+  transform:skewX(-14deg);background:#FFF;box-shadow:0 0 4px rgba(0,0,0,.5)}
+.gauge-mark.m-light{background:var(--deep);box-shadow:0 0 3px rgba(255,255,255,.8)}
+/* 濃い板の上（ホームの得点カード） */
+.gauge{--g-track:rgba(3,18,13,.5);--g-frame:rgba(255,255,255,.2);--g-gap:rgba(3,18,13,.55)}
+.g-hp{--g-grad:linear-gradient(180deg,var(--hp-lite),var(--hp) 46%,var(--hp-deep));--g-glow:rgba(95,221,190,.5)}
+.g-lm{--g-grad:linear-gradient(180deg,var(--lm-lite),var(--lm) 46%,var(--lm-deep));--g-glow:rgba(229,169,60,.45)}
+/* 白いカードの上（経過・記録タブ） */
+.g-light{--g-track:#E4EDE7;--g-frame:rgba(28,74,59,.14);--g-gap:#fff;height:11px}
+.g-light .gauge-fill{box-shadow:none}
+.g-light .gauge-fill::after{background:rgba(255,255,255,.75)}
+.g-green{--g-grad:linear-gradient(180deg,#2FB183,var(--gauge-green) 46%,#0B6D4C);--g-glow:transparent}
+.g-yuzu{--g-grad:linear-gradient(180deg,#E9B65C,var(--gauge-yuzu) 46%,#A66A14);--g-glow:transparent}
+/* ゲージ1本ぶんの行: 見出し・数値・ゲージをこの形で全画面そろえる */
+.grow{margin-top:11px}
+.grow-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:5px}
+.grow-k{font-size:10px;font-weight:700;letter-spacing:.08em;opacity:.72}
+.grow-v{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;opacity:.9}
+/* 肩書の段を示す小片（体力ゲージ脇の小さな区画にあたる） */
+.pips{display:flex;gap:3px;align-items:center}
+.pip{width:7px;height:9px;transform:skewX(-14deg);border-radius:1px;background:rgba(255,255,255,.16);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.pip.on{background:linear-gradient(180deg,var(--lm-lite),var(--lm-deep));box-shadow:0 0 5px rgba(229,169,60,.55)}
+.pip.now{background:linear-gradient(180deg,#FFF3D8,var(--lm));box-shadow:0 0 8px rgba(229,169,60,.9)}
+.pips-light .pip{background:#E4EDE7;box-shadow:inset 0 0 0 1px rgba(28,74,59,.1)}
+.pips-light .pip.on{background:linear-gradient(180deg,#E9B65C,var(--gauge-yuzu));box-shadow:none}
+.pips-light .pip.now{background:linear-gradient(180deg,var(--gauge-yuzu),#A66A14);box-shadow:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
 .weight-trend-svg text{font-family:"Hiragino Maru Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif}
 .sec-title{font-size:19px;font-weight:700;margin-bottom:10px}
@@ -45,7 +104,13 @@ header{padding:18px 2px 14px}
 .opt.on{border-color:var(--green);background:var(--pale);font-weight:700}
 .btn-main{width:100%;padding:14px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:15px;font-weight:700}
 .btn-main:disabled{background:var(--line);color:var(--sub);cursor:not-allowed}
-.score-card{background:var(--deep);border:none;color:#fff}
+/* 得点カードは「計器の板」に見せる。斜めの淡い光沢を1枚だけ重ねている。 */
+.score-card{position:relative;overflow:hidden;border:none;color:#fff;
+  background:linear-gradient(158deg,#265B4B 0%,#1C4A3B 52%,#143529 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 6px 18px rgba(18,51,42,.2)}
+.score-card::after{content:"";position:absolute;top:-40%;left:-10%;width:52%;height:180%;pointer-events:none;
+  transform:rotate(18deg);background:linear-gradient(90deg,rgba(255,255,255,.055),rgba(255,255,255,0))}
+.score-card>*{position:relative;z-index:1}
 .score-num{font-size:42px;font-weight:900;line-height:1.1}
 .note{display:flex;background:#FFFEFA;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:10px}
 .note .edge{width:6px;flex-shrink:0}
@@ -95,7 +160,9 @@ nav .lb{font-size:11px;font-weight:700}
 .mini-icon{width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 2px 2px rgba(38,52,46,.10));flex:0 0 auto}
 .section-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .time-illust{width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 2px 2px rgba(38,52,46,.10))}
-.stat{background:var(--pale);border-radius:10px;padding:12px 4px;text-align:center}
+/* 数値タイルも同じ「板」の質感でそろえる */
+.stat{background:linear-gradient(180deg,#EEF6F1,var(--pale));border:1px solid rgba(28,74,59,.09);
+  border-radius:10px;padding:12px 4px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.8)}
 .stat .k{font-size:10px;color:var(--sub);font-weight:700}
 .stat .v{font-size:21px;font-weight:900;color:var(--deep);font-family:"Hiragino Maru Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif}
 .stat .s{font-size:10px;color:var(--sub)}
@@ -150,7 +217,10 @@ nav .lb{font-size:11px;font-weight:700}
         <div class="tagline" id="tagline">食生活や睡眠日誌のお手伝い。</div>
       </div>
     </div>
-    <div class="today-date disp" id="todayDate"></div>
+    <div class="head-meta">
+      <div class="today-date disp" id="todayDate"></div>
+      <div class="bmi-chip disp" id="bmiChip" hidden></div>
+    </div>
   </header>
   <div id="banner"></div>
   <main id="view"></main>
@@ -3838,6 +3908,42 @@ function secHTML(title){
   return '<div style="margin:6px 0 10px"><div class="sec-title disp">' + title + '</div></div>';
 }
 
+/* ---------- ゲージ ----------
+   アプリ内のすべての「達成度を示すバー」はこの2つの関数だけを通す。
+   見た目の作りを1か所に集めることで、画面をまたいでも同じ部品に見える。
+   ratio は 0〜1。色だけで意味を伝えないよう、呼び出し側で必ず数値も併記する。 */
+function gaugeHTML(ratio, kind, markRatio){
+  const pct = Math.max(0, Math.min(1, Number(ratio)||0)) * 100;
+  /* 0%のときは伸びる部分を描かない(先端の光だけが残って見えるのを防ぐ) */
+  const fill = pct > 0
+    ? '<div class="gauge-fill" style="width:' + pct.toFixed(1) + '%"></div>'
+    : '';
+  /* 目標の位置に目印を1本立てる(得点なら70点の線)。ゲージの外側に置いて隠れないようにする。 */
+  const mk = markRatio==null ? "" :
+    '<div class="gauge-mark' + (/g-light/.test(kind||"") ? " m-light" : "") +
+    '" style="left:' + (Math.max(0,Math.min(1,markRatio))*100).toFixed(1) + '%"></div>';
+  return '<div class="gauge-wrap">' +
+    '<div class="gauge ' + (kind||"g-hp") + '" role="presentation">' + fill +
+    '<div class="gauge-seg"></div></div>' + mk + '</div>';
+}
+/* 見出し・数値・ゲージを1行にまとめた形。数値は文字でも読めるようにしている。 */
+function gaugeRowHTML(label, valueText, ratio, kind, markRatio){
+  return '<div class="grow">' +
+    '<div class="grow-head"><span class="grow-k">' + esc(label) + '</span>' +
+    '<span class="grow-v disp">' + esc(valueText) + '</span></div>' +
+    gaugeHTML(ratio, kind, markRatio) + '</div>';
+}
+/* 肩書の段を示す小片。level が今どの段にいるかを、区画の数で示す。 */
+function pipsHTML(level, light){
+  const bounds = [1,5,10,18,30,45,60,75,95];   // 肩書が変わる境目
+  let cur = 0;
+  bounds.forEach(function(b,i){ if(level >= b) cur = i; });
+  return '<div class="pips' + (light?" pips-light":"") + '" role="presentation">' +
+    bounds.map(function(_,i){
+      return '<span class="pip' + (i<cur?" on":i===cur?" now":"") + '"></span>';
+    }).join("") + '</div>';
+}
+
 /* --- 時間栄養学の指標（複数日の食事時刻から算出） ---
    いずれも食事「中点」(midpoint = 朝食と夕食の中間時刻)を用いる。
    ・Eating Jet Lag (EJL): 週末と平日の食事中点のズレ(時間)。
@@ -4442,22 +4548,34 @@ function renderHome(){
           '<button class="btn-main" id="ckBtn" style="margin-top:10px;padding:11px;font-size:13px">今週のチェックを受ける</button></div>' +
         '</div></div>' : "") +
     '<div class="card score-card">' +
-      '<div style="display:flex;justify-content:space-between;align-items:flex-end">' +
-        '<div>' +
-          '<div style="font-size:10px;letter-spacing:.08em;line-height:1.35;opacity:.7;font-weight:700">今日の食事バランス得点</div>' +
+      /* 上段: 今日の得点(この画面の主役の数字)と、右に健康偏差値・肩書 */
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">' +
+        '<div style="min-width:0">' +
+          '<div style="font-size:10px;letter-spacing:.08em;line-height:1.35;opacity:.72;font-weight:700">今日の食事バランス得点</div>' +
           '<div class="score-num disp">' + (rec?score:"—") + '<span style="font-size:16px;opacity:.7"> /100</span></div>' +
           (rec?"":'<div style="font-size:11px;opacity:.7">記録するとスコアが表示されます</div>') +
         '</div>' +
-        '<div style="text-align:right;font-size:12px;opacity:.85;line-height:1.7">' +
-          '<div style="font-size:9px;opacity:.7;letter-spacing:.1em">健康偏差値</div>' +
-          '<div class="disp" style="font-size:24px;font-weight:900;opacity:1;line-height:1.1">' + LV.level + '</div>' +
-          '<div style="font-size:10px;font-weight:700;color:var(--yuzu)">' + titleForLevel(LV.level) + '</div>' +
-          (streak>0?'<div style="font-size:13px;font-weight:700" class="disp">🔥 '+streak+'日連続</div>':"") +
+        '<div style="text-align:right;flex-shrink:0">' +
+          '<div style="font-size:9px;opacity:.7;letter-spacing:.1em;font-weight:700">健康偏差値</div>' +
+          '<div class="disp" style="font-size:26px;font-weight:900;line-height:1.15">' + LV.level + '</div>' +
+          '<div class="disp" style="font-size:11px;font-weight:700;color:var(--lm-lite)">' + titleForLevel(LV.level) + '</div>' +
+          '<div style="margin-top:6px;display:flex;justify-content:flex-end">' + pipsHTML(LV.level) + '</div>' +
         '</div>' +
       '</div>' +
-      '<div style="margin-top:12px"><div style="height:6px;background:rgba(255,255,255,.18);border-radius:3px;overflow:hidden"><div style="height:6px;width:' + Math.round(LV.prog*100) + '%;background:var(--yuzu);border-radius:3px"></div></div>' +
-      '<div style="font-size:10px;opacity:.6;margin-top:4px">' + (LV.gate ? "定期アセスメント完了で、次の肩書に昇進できます" : "BMI " + p.bmi.toFixed(1) + "（" + bmiClass(p.bmi) + "）") + '</div></div>' +
-      (streak>=2?'<div style="margin-top:8px;font-size:11px;opacity:.85;border-top:1px solid rgba(255,255,255,.2);padding-top:8px">'+esc(streakMsg(streak))+'</div>':"") +
+      /* 得点のゲージ。70点が目標なので、その位置に目印を立てる */
+      gaugeRowHTML("食事バランス（目標70点）", (rec ? score + " / 100" : "未記録"),
+        (rec ? score/100 : 0), "g-hp", 0.7) +
+      /* 肩書までの伸び。数字(%)は出さず、伸びとしてだけ示す */
+      gaugeRowHTML("次の健康偏差値まで",
+        (LV.gate ? "アセスメント待ち" : LV.prog>0 ? "積み上がり中" : "これから積み上がります"),
+        LV.prog, "g-lm") +
+      (streak>0
+        ? '<div style="margin-top:11px;display:flex;align-items:center;gap:8px">' +
+            '<span class="disp" style="font-size:13px;font-weight:700">🔥 ' + streak + '日連続</span>' +
+            (LV.gate?'<span style="font-size:10px;opacity:.72">定期アセスメント完了で次の肩書へ</span>':'') +
+          '</div>'
+        : (LV.gate?'<div style="font-size:10px;opacity:.72;margin-top:10px">定期アセスメント完了で、次の肩書に昇進できます</div>':"")) +
+      (streak>=2?'<div style="margin-top:8px;font-size:11px;opacity:.85;border-top:1px solid rgba(255,255,255,.18);padding-top:8px">'+esc(streakMsg(streak))+'</div>':"") +
     '</div>' +
     (rec?"":'<div class="card" style="background:var(--pale);border-color:var(--green)"><div style="display:flex;gap:10px;align-items:flex-start"><div style="font-size:20px">🎯</div><div><div class="disp" style="font-size:13px;font-weight:700;color:var(--deep);margin-bottom:2px">今日のミニチャレンジ</div><div style="font-size:13px;line-height:1.7;color:var(--ink)">'+esc(todayChallenge())+'</div></div></div></div>') +
     secHTML("今日の食事ノート") +
@@ -4611,15 +4729,22 @@ function renderRecord(){
       '<div style="font-size:12px;font-weight:700;color:var(--sub);margin-bottom:4px">今日食べた料理の皿数</div>' +
       '<div style="font-size:11px;color:var(--sub);margin-bottom:6px">1日の合計を記録します。カロリー計算は不要、「何皿食べたか」を数えるだけで大丈夫。食べた量が多かった場合は、その分、カウント数を増やしてください。</div>' +
       svDefinitionHTML() +
-      Object.keys(d.sv).map(k=>
-        '<div class="row"><div>' +
-          '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + p.targets[k] + '皿</span></div>' +
-          '<div style="font-size:11px;color:var(--sub)">' + SV_INFO[k] + '</div></div>' +
+      Object.keys(d.sv).map(function(k){
+        const tg = Number(p.targets[k]) || 0;
+        const got = Number(d.sv[k]) || 0;
+        /* 目標に対する達成度をゲージでも示す。ホームの得点ゲージと同じ部品。 */
+        return '<div class="row" style="align-items:flex-start"><div style="flex:1;min-width:0;padding-right:10px">' +
+          '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + tg + '皿</span></div>' +
+          '<div style="font-size:11px;color:var(--sub)">' + SV_INFO[k] + '</div>' +
+          (tg>0 ? '<div style="margin-top:7px;max-width:230px">' +
+            gaugeHTML(got/tg, "g-light " + (got>=tg ? "g-green" : "g-yuzu")) + '</div>' : "") +
+          '</div>' +
           '<div class="stepper">' +
             '<button class="st-minus" data-sv="' + k + '" data-dir="-1" aria-label="減らす">−</button>' +
-            '<div class="st-val">' + d.sv[k] + '</div>' +
+            '<div class="st-val">' + got + '</div>' +
             '<button class="st-plus" data-sv="' + k + '" data-dir="1" aria-label="増やす">＋</button>' +
-          '</div></div>').join("") +
+          '</div></div>';
+      }).join("") +
       '<div class="row" style="border-bottom:none;padding-top:12px"><div>' +
         '<div class="disp" style="font-size:14px;font-weight:700">補食（3食を補う）</div>' +
         '<div style="font-size:11px;color:var(--sub)">おにぎり・果物・乳製品など、3食で足りない分を補うもの</div></div>' +
@@ -5412,8 +5537,11 @@ function renderReport(){
       return '<div class="card" style="text-align:center">' +
         '<div style="font-size:10px;color:var(--sub);font-weight:700;letter-spacing:.15em">健康偏差値</div>' +
         '<div class="disp" style="font-size:44px;font-weight:900;color:var(--deep);line-height:1.1">' + LVr.level + '</div>' +
-        '<div class="disp" style="font-size:13px;color:var(--green);font-weight:700;margin:4px 0 12px">肩書「' + displayLevelTitle(LVr.level) + '」</div>' +
-        '<div style="height:8px;background:var(--pale);border-radius:4px;overflow:hidden;margin:0 10px"><div style="height:8px;width:' + Math.round(LVr.prog*100) + '%;background:var(--green);border-radius:4px"></div></div>' +
+        '<div class="disp" style="font-size:13px;color:var(--green);font-weight:700;margin:4px 0 10px">肩書「' + displayLevelTitle(LVr.level) + '」</div>' +
+        '<div style="display:flex;justify-content:center;margin-bottom:9px">' + pipsHTML(LVr.level, true) + '</div>' +
+        '<div style="margin:0 10px">' + gaugeHTML(LVr.prog, "g-light g-yuzu") + '</div>' +
+        '<div style="font-size:10px;color:var(--sub);margin-top:6px">' +
+          (LVr.gate ? "アセスメント待ち" : "次の偏差値へ積み上がり中") + '</div>' +
         '<div class="hint" style="margin-top:12px;text-align:left">' +
           (LVr.gate
             ? 'いまは昇進前の定期アセスメント待ちです。ホーム画面から受けると、次の肩書に昇進できます。'
@@ -5635,8 +5763,23 @@ function fireReminderIfNeeded(){
 }
 
 /* --- 全体描画 --- */
+/* BMIはヘッダーの日付の隣に置く。日々の記録では変わらない体格の情報なので、
+   得点の板の中ではなく、画面の上部で常に見える位置に出す。 */
+function syncBmiChip(){
+  const el = $("bmiChip");
+  if(!el) return;
+  const p = S.profile;
+  const ready = !!(p && S.consent && S.consent.version===CONSENT_VERSION && !aboutMode
+                   && typeof p.bmi==="number" && isFinite(p.bmi));
+  if(!ready){ el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  el.innerHTML = '<span class="k">BMI</span>' +
+    '<span class="v">' + p.bmi.toFixed(1) + '</span>' +
+    '<span class="s">' + esc(bmiClass(p.bmi)) + '</span>';
+}
 function render(){
   const nav=$("nav"), banner=$("banner");
+  syncBmiChip();
   // 同意ゲート: 未同意 or 同意文書が改訂された場合は、同意するまで利用不可
   if(!S.consent || S.consent.version!==CONSENT_VERSION){
     nav.style.display="none"; banner.innerHTML=""; $("footer").innerHTML=""; renderConsent(); return;
