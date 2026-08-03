@@ -21,7 +21,7 @@
      いずれも地との明暗比 3:1 以上。白いカードの上では彩度を上げた段を使う。 */
   --hp:#5FDDBE; --hp-deep:#2FB79A; --hp-lite:#8DEBD3;
   --lm:#E5A93C; --lm-deep:#C08018; --lm-lite:#F7D486;
-  --gauge-green:#12885F; --gauge-yuzu:#C98620;
+  --gauge-green:#12885F; --gauge-yuzu:#C98620; --gauge-over:#8B0000;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
@@ -77,6 +77,10 @@ header{padding:18px 2px 14px}
 .g-light .gauge-fill::after{background:rgba(255,255,255,.75)}
 .g-green{--g-grad:linear-gradient(180deg,#2FB183,var(--gauge-green) 46%,#0B6D4C);--g-glow:transparent}
 .g-yuzu{--g-grad:linear-gradient(180deg,#E9B65C,var(--gauge-yuzu) 46%,#A66A14);--g-glow:transparent}
+/* 目安範囲の上限を超えた分。色だけに頼らず、必ず「多め」の文字も添える。 */
+.g-over{--g-grad:linear-gradient(180deg,#C03A3A,var(--gauge-over) 46%,#5E0000);--g-glow:transparent}
+.sv-flag{display:inline-block;margin-left:8px;font-size:10px;font-weight:700;border-radius:999px;
+  padding:2px 8px;background:#FBEEEE;color:var(--gauge-over);border:1px solid rgba(139,0,0,.22)}
 /* ゲージ1本ぶんの行: 見出し・数値・ゲージをこの形で全画面そろえる */
 .grow{margin-top:11px}
 .grow-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:5px}
@@ -630,6 +634,21 @@ function proportionalGuideScore(value, lower, upper, maxPoint){
   if(v < lower) return Math.round(maxPoint * v / lower);
   if(!isFinite(upper) || v <= upper) return maxPoint;
   return Math.max(0, Math.round(maxPoint - maxPoint * (v - upper) / upper));
+}
+/* 皿数ゲージの色分けに使う状態。「過剰」の判定だけは、目標値ではなく
+   得点計算と同じ食事バランスガイドの目安範囲(foodGuideRange)の上限で行う。
+   ・副菜と果物はガイドが上限を設けていない(多くても減点しない)ため過剰にならない
+   ・主食/主菜/乳製品は上限があり、超えた分だけ得点も下がる
+   一方「達成」の判定は画面に出している目標皿数を基準にする。
+   表示された目標と色が食い違って見えるのを防ぐため。 */
+function svGaugeState(k, value, targets){
+  const r = foodGuideRange(k, targets);
+  const upper = r[1];
+  const v = Math.max(0, num0(value));
+  const tg = Number(targets[k]||0);
+  if(isFinite(upper) && v > upper) return { state:"over", upper:upper, excess:v-upper };
+  if(tg>0 && v >= tg) return { state:"ok", upper:upper, excess:0 };
+  return { state:"under", upper:upper, excess:0 };
 }
 function dayScore(d, targets){
   d = normalizeDay(d);
@@ -4732,12 +4751,16 @@ function renderRecord(){
       Object.keys(d.sv).map(function(k){
         const tg = Number(p.targets[k]) || 0;
         const got = Number(d.sv[k]) || 0;
-        /* 目標に対する達成度をゲージでも示す。ホームの得点ゲージと同じ部品。 */
+        const st = svGaugeState(k, got, p.targets);
+        const cls = st.state==="over" ? "g-over" : st.state==="ok" ? "g-green" : "g-yuzu";
+        /* 目標に対する達成度をゲージでも示す。ホームの得点ゲージと同じ部品。
+           上限を超えた日は暗い赤にし、「多め」の文字と目安の上限も添える。 */
         return '<div class="row" style="align-items:flex-start"><div style="flex:1;min-width:0;padding-right:10px">' +
-          '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + tg + '皿</span></div>' +
+          '<div class="disp" style="font-size:14px;font-weight:700">' + k + '<span style="font-size:11px;color:var(--green);margin-left:8px">目標 ' + tg + '皿</span>' +
+          (st.state==="over" ? '<span class="sv-flag">多め　目安' + st.upper + '皿まで</span>' : "") + '</div>' +
           '<div style="font-size:11px;color:var(--sub)">' + SV_INFO[k] + '</div>' +
           (tg>0 ? '<div style="margin-top:7px;max-width:230px">' +
-            gaugeHTML(got/tg, "g-light " + (got>=tg ? "g-green" : "g-yuzu")) + '</div>' : "") +
+            gaugeHTML(got/tg, "g-light " + cls) + '</div>' : "") +
           '</div>' +
           '<div class="stepper">' +
             '<button class="st-minus" data-sv="' + k + '" data-dir="-1" aria-label="減らす">−</button>' +
